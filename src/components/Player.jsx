@@ -206,7 +206,7 @@ export default function Player() {
         }
       >
         <group position={[0, 0, 0]}>
-          <Car fit={0.30} rotateY={0} />
+          <Car fit={0.45} rotateY={0} />
           <PositionalAudio ref={skidRef} url={SKID_URL} distance={8} />
         </group>
       </Suspense>
