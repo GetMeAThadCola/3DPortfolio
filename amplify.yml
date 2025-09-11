@@ -3,8 +3,10 @@ frontend:
   phases:
     preBuild:
       commands:
-        - corepack enable
-        - npm ci
+        # Use Node 20 if nvm is available (new Amplify images have it)
+        - if command -v nvm >/dev/null 2>&1; then nvm install 20 && nvm use 20; fi
+        # Install deps (ci will fail if no package-lock.json; this falls back)
+        - npm ci || npm i
     build:
       commands:
         - npm run build
@@ -14,7 +16,4 @@ frontend:
       - '**/*'
   cache:
     paths:
-      - node_modules/**
-
-# If your app is under a subfolder/monorepo, add:
-# appRoot: my-3d-portfolio
+      - node_modules/**/*
