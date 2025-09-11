@@ -1,5 +1,11 @@
 // src/components/World.jsx
-import React, { useRef, useMemo, useEffect } from "react";
+import React, {
+  useRef,
+  useMemo,
+  useEffect,
+  forwardRef,
+  useImperativeHandle,
+} from "react";
 import { useFrame } from "@react-three/fiber";
 import { PositionalAudio } from "@react-three/drei";
 import * as THREE from "three";
@@ -12,13 +18,13 @@ const GHOST_RISE = 0.9;   // m/s upward
 const GHOST_FADE = 0.35;  // opacity per second
 const GHOST_SPIN = 0.6;   // rad/s spin while rising
 
-// Audio (place your file in public/audio/)
+// Audio (place your file in /public/audio/)
 const SCREAM_URL = "/audio/ped_scream.mp3";
-const SCREAM_VOL = 0.7;       // 0..1
-const SCREAM_MIN_RATE = 0.95; // randomize pitch slightly
+const SCREAM_VOL = 0.7;
+const SCREAM_MIN_RATE = 0.95;
 const SCREAM_MAX_RATE = 1.10;
 
-/** Match the links you use in App.jsx **/
+/** Match App.jsx */
 const LINKS = {
   resumeUrl: "/resume.pdf",
   githubUrl: "https://github.com/GetMeAThadCola",
@@ -27,9 +33,7 @@ const LINKS = {
   moreinfoUrl: "https://hunter-resume.vercel.app",
 };
 
-/** Stations: same centers as your <BuildingStation/>s
- *  r = larger usable area (tweak per station if you want)
- */
+/** Stations (larger usable radii) */
 const STATIONS = [
   { label: "Resume",    x:  0,  z: -4, r: 3.0, url: LINKS.resumeUrl },
   { label: "GitHub",    x: 10,  z:  0, r: 2.8, url: LINKS.githubUrl },
@@ -38,7 +42,7 @@ const STATIONS = [
   { label: "More Info", x:  3,  z: -5, r: 2.8, url: LINKS.moreinfoUrl },
 ];
 
-/** small props **/
+/** ------- Small props ------- */
 function Tree({ pos = [0, 0, 0], scale = 1 }) {
   return (
     <group position={pos} scale={scale}>
@@ -58,38 +62,6 @@ function Tree({ pos = [0, 0, 0], scale = 1 }) {
   );
 }
 
-function StreetLamp({ pos = [0, 0, 0] }) {
-  return (
-    <group position={pos}>
-      <mesh castShadow>
-        <cylinderGeometry args={[0.03, 0.03, 1.4, 12]} />
-        <meshStandardMaterial color="#2e3e60" />
-      </mesh>
-      <mesh position={[0, 0.75, 0.22]}>
-        <boxGeometry args={[0.24, 0.06, 0.1]} />
-        <meshStandardMaterial color="#3f5a92" />
-      </mesh>
-      <pointLight position={[0, 0.78, 0.22]} intensity={0.9} distance={3.2} />
-    </group>
-  );
-}
-
-function StopSign({ pos = [0, 0, 0], rotY = 0 }) {
-  return (
-    <group position={pos} rotation={[0, rotY, 0]}>
-      <mesh castShadow>
-        <cylinderGeometry args={[0.03, 0.03, 1.2, 10]} />
-        <meshStandardMaterial color="#a0a0a0" />
-      </mesh>
-      <mesh position={[0, 0.75, 0.06]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[0.22, 0.22, 0.02, 8]} />
-        <meshStandardMaterial color="#c1121f" />
-      </mesh>
-    </group>
-  );
-}
-
-/** Background building (windows + door) */
 function BackgroundBuilding({ x, z, w, d, h, color }) {
   const rows = Math.max(2, Math.round(h * 3));
   const colsFB = Math.max(2, Math.round(w * 3));
@@ -144,13 +116,16 @@ function BackgroundBuilding({ x, z, w, d, h, color }) {
   );
 }
 
-/** Pedestrian that can scream, then turn into a ghost and float away after a hit */
-function Pedestrian({ start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR = 13.6 }) {
+/** ------- Pedestrian (forwardRef with API for bullets) ------- */
+const Pedestrian = forwardRef(function Pedestrian(
+  { start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR = 13.6 },
+  apiRef
+) {
   const ref = useRef();
   const normalG = useRef();
   const ghostG = useRef();
+  const screamRef = useRef();
 
-  // One shared material for all ghost parts so opacity fades together
   const ghostMat = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
@@ -163,9 +138,6 @@ function Pedestrian({ start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR =
     []
   );
 
-  // scream audio
-  const screamRef = useRef();
-
   const speed = 0.9;
   const target = useRef({ x: start[0], z: start[2] });
   const timer = useRef(0);
@@ -175,39 +147,57 @@ function Pedestrian({ start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR =
   const screamed = useRef(false);
   const playerPos = usePlayer((s) => s.pos);
 
-  // Prepare the scream (non-looping, positional)
+  useImperativeHandle(apiRef, () => ({
+    becomeGhost: () => {
+      if (isGhost.current) return;
+      // scream once on hit
+      if (!screamed.current && screamRef.current) {
+        try {
+          const a = screamRef.current;
+          a.setVolume(SCREAM_VOL);
+          if (a.setPlaybackRate) {
+            a.setPlaybackRate(SCREAM_MIN_RATE + Math.random() * (SCREAM_MAX_RATE - SCREAM_MIN_RATE));
+          }
+          if (!a.isPlaying) a.play();
+        } catch {}
+        screamed.current = true;
+      }
+      isGhost.current = true;
+      ghostAlpha.current = 0.9;
+      if (ref.current) ref.current.position.y += 0.05;
+    },
+    getPosition: () => {
+      const p = ref.current?.position;
+      return p ? { x: p.x, y: p.y, z: p.z } : { x: start[0], y: 0.02, z: start[2] };
+    },
+  }));
+
   useEffect(() => {
     const a = screamRef.current;
     if (!a) return;
     try {
       a.setLoop(false);
-      a.setRefDistance(4); // roll-off
-      a.setVolume(0);      // start silent; set on hit
-    } catch {/* noop */}
+      a.setRefDistance(4);
+      a.setVolume(0);
+    } catch {}
   }, []);
 
   useFrame((_, dt) => {
     if (!ref.current) return;
 
-    // Toggle visibility based on state
     if (normalG.current) normalG.current.visible = !isGhost.current;
     if (ghostG.current)  ghostG.current.visible  =  isGhost.current;
 
     if (isGhost.current) {
-      // Fly up, spin, fade out
       ref.current.position.y += GHOST_RISE * dt;
       ref.current.rotation.y += GHOST_SPIN * dt;
-
       ghostAlpha.current = Math.max(0, ghostAlpha.current - GHOST_FADE * dt);
       ghostMat.opacity = ghostAlpha.current;
-
-      if (ghostAlpha.current <= 0.01) {
-        ref.current.visible = false;
-      }
+      if (ghostAlpha.current <= 0.01) ref.current.visible = false;
       return;
     }
 
-    // ----- Normal wandering AI -----
+    // wander
     timer.current -= dt;
     if (timer.current <= 0) {
       if (doors.length > 0 && Math.random() < 0.3) {
@@ -229,7 +219,7 @@ function Pedestrian({ start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR =
       timer.current = 2 + Math.random() * 3;
     }
 
-    // move toward target
+    // move
     const p = ref.current.position;
     const dx = target.current.x - p.x;
     const dz = target.current.z - p.z;
@@ -241,68 +231,45 @@ function Pedestrian({ start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR =
       ref.current.rotation.y = Math.atan2(vx, vz);
     }
 
-    // clamp inside wall
+    // clamp
     const pr = Math.hypot(p.x, p.z);
     if (pr > clampR) {
       const t = clampR / pr;
       p.x *= t; p.z *= t;
     }
 
-    // ----- Collision with player -> scream + become ghost -----
+    // car collision -> ghost
     if (playerPos) {
       const [px, , pz] = playerPos;
       const d = Math.hypot(px - p.x, pz - p.z);
       if (d < HIT_DIST) {
-        // scream once
-        if (!screamed.current && screamRef.current) {
-          try {
-            const a = screamRef.current;
-            a.setVolume(SCREAM_VOL);
-            // slight pitch variation
-            if (a.setPlaybackRate) {
-              a.setPlaybackRate(
-                SCREAM_MIN_RATE + Math.random() * (SCREAM_MAX_RATE - SCREAM_MIN_RATE)
-              );
-            }
-            if (!a.isPlaying) a.play();
-          } catch {/* autoplay might block before first user gesture */}
-          screamed.current = true;
-        }
-        // ghost state
-        isGhost.current = true;
-        ghostAlpha.current = 0.9;
-        ref.current.position.y += 0.05; // little pop
+        apiRef?.current?.becomeGhost?.();
       }
     }
   });
 
   return (
     <group ref={ref} position={[start[0], 0.02, start[2]]}>
-      {/* Normal ped */}
+      {/* normal */}
       <group ref={normalG}>
         <mesh castShadow>
           <cylinderGeometry args={[0.08, 0.09, 0.35, 12]} />
-        <meshStandardMaterial color={color} />
+          <meshStandardMaterial color={color} />
         </mesh>
         <mesh position={[0, 0.25, 0]} castShadow>
           <sphereGeometry args={[0.09, 16, 16]} />
           <meshStandardMaterial color="#ffcf99" />
         </mesh>
-        {/* Positional scream audio */}
         <PositionalAudio ref={screamRef} url={SCREAM_URL} distance={6} />
       </group>
-
-      {/* Ghost (semi-transparent, glowy) */}
+      {/* ghost */}
       <group ref={ghostG} visible={false}>
-        {/* Head */}
         <mesh position={[0, 0.22, 0]} material={ghostMat}>
           <sphereGeometry args={[0.11, 20, 20]} />
         </mesh>
-        {/* Body */}
         <mesh position={[0, 0.08, 0]} material={ghostMat}>
           <cylinderGeometry args={[0.16, 0.18, 0.30, 16]} />
         </mesh>
-        {/* Little trailing blobs */}
         {[-0.12, 0, 0.12].map((x, i) => (
           <mesh key={i} position={[x, -0.08, 0]} material={ghostMat}>
             <sphereGeometry args={[0.055, 16, 16]} />
@@ -311,16 +278,20 @@ function Pedestrian({ start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR =
       </group>
     </group>
   );
-}
+});
 
+/** ------- World ------- */
 export default function World() {
   const ground = useRef();
-  const R = 14; // island radius
+  const R = 14;
 
   const playerPos = usePlayer((s) => s.pos);
   const setNearestStation = useControls((s) => s.setNearestStation);
-  const setCanEnter = useControls((s) => s.setCanEnter); // optional in store
-  const lastLabelRef = useRef(null);
+  const setCanEnter = useControls((s) => s.setCanEnter);
+
+  const bulletQueueRef = useRef([]); // local mirror of store bullets
+  const bullets = useRef([]); // { pos, dir, speed, life, mesh }
+  const lastNearestLabel = useRef(null);
 
   useFrame(() => {
     if (ground.current) ground.current.rotation.z += 0.00012;
@@ -346,12 +317,8 @@ export default function World() {
   };
   const isOcc = (x, z) => OCC.has(key(x, z));
 
-  /** pre-mark: roads, lamps, stop signs, stations */
-  const lamps = useMemo(() => [[-3, -0.9],[0, -0.9],[3, -0.9],[-3, 0.9],[0, 0.9],[3, 0.9]], []);
-  const stopSigns = useMemo(() => [[1.6, -1.6],[-1.6, 1.6],[1.6, 1.6],[-1.6, -1.6]], []);
-  // derive station points from STATIONS so everything stays in sync
+  /** pre-mark: roads + station pads */
   const stationPoints = useMemo(() => STATIONS.map(s => [s.x, s.z]), []);
-
   useMemo(() => {
     for (let gx = -R; gx <= R; gx += 0.4) {
       for (let gz = -R; gz <= R; gz += 0.4) {
@@ -359,22 +326,19 @@ export default function World() {
         if (isInRoad(gx, gz)) markOcc(gx, gz, 0.6);
       }
     }
-    lamps.forEach(([x,z]) => markOcc(x, z, 0.9));
-    stopSigns.forEach(([x,z]) => markOcc(x, z, 0.9));
     stationPoints.forEach(([x,z]) => markOcc(x, z, 1.6));
-  }, [lamps, stopSigns, stationPoints]);
+  }, [stationPoints]);
 
-  /** vibrant palette */
+  /** palette + blocks */
   const palette = ["#1d4ed8","#0ea5e9","#10b981","#16a34a","#f59e0b","#ef4444","#a855f7","#fb7185","#22d3ee","#f97316","#84cc16","#06b6d4","#eab308","#f43f5e","#60a5fa"];
 
-  /** place 20 buildings, uniformly around the island (no street/overlap) */
   const cityBlocks = useMemo(() => {
     const blocks = [];
     let tries = 0;
     while (blocks.length < 20 && tries < 2000) {
       tries++;
       const ang = Math.random() * Math.PI * 2;
-      const rad = 2.5 + Math.random() * (R - 3.2); // keep inside rim
+      const rad = 2.5 + Math.random() * (R - 3.2);
       const x = Math.cos(ang) * rad;
       const z = Math.sin(ang) * rad;
       if (isInRoad(x, z)) continue;
@@ -392,13 +356,11 @@ export default function World() {
     return blocks;
   }, []); // eslint-disable-line
 
-  /** doors list for pedestrians (x,z at +Z face of each building) */
   const doorPositions = useMemo(
     () => cityBlocks.map(b => [b.x, b.z + b.d / 2 + 0.08]),
     [cityBlocks]
   );
 
-  /** rim trees (after buildings) */
   const trees = useMemo(() => {
     const t = [];
     for (let i = 0; i < 24; i++) {
@@ -413,7 +375,6 @@ export default function World() {
     return t;
   }, []); // eslint-disable-line
 
-  /** pedestrians: spawn near random buildings (clamped inside wall) */
   const pedestrians = useMemo(() => {
     const colors = ["#ff9f1c","#e76f51","#00b4d8","#ffd166","#90be6d","#f72585"];
     return Array.from({ length: Math.min(10, cityBlocks.length) }, (_, i) => {
@@ -427,14 +388,19 @@ export default function World() {
     });
   }, [cityBlocks]);
 
-  // ---- Proximity check for Enter button (LARGER station areas) ----
+  // refs to each pedestrian for bullet collisions
+  const pedRefs = useMemo(
+    () => pedestrians.map(() => React.createRef()),
+    [pedestrians.length]
+  );
+
+  /** -------- Proximity for Enter button (larger area, nearest station) -------- */
   useFrame(() => {
     if (!playerPos) return;
     const [px, , pz] = playerPos;
 
     let nearest = null;
     let minD2 = Infinity;
-
     for (const s of STATIONS) {
       const dx = s.x - px;
       const dz = s.z - pz;
@@ -446,10 +412,70 @@ export default function World() {
     }
 
     const label = nearest ? nearest.label : null;
-    if (label !== lastLabelRef.current) {
-      lastLabelRef.current = label;
+    if (label !== lastNearestLabel.current) {
+      lastNearestLabel.current = label;
       if (setNearestStation) setNearestStation(nearest);
-      if (setCanEnter) setCanEnter(!!nearest); // keep EnterButton glow in sync if your store has it
+      if (setCanEnter) setCanEnter(!!nearest);
+    }
+  });
+
+  /** -------- Bullet handling (spawn + move + collide + cull) -------- */
+  useFrame((_, dt) => {
+    const store = useControls.getState();
+    // drain queue
+    while (store.bulletQueue.length > 0) {
+      const b = store.bulletQueue[0];
+      store.shiftBullet();
+
+      const pos = new THREE.Vector3().fromArray(b.pos || [0, 0.25, 0]);
+      const dir = new THREE.Vector3().fromArray(b.dir || [0, 0, 1]).normalize();
+      const speed = b.speed ?? 16;
+      const life = 2.0;
+
+      const geom = new THREE.SphereGeometry(0.06, 10, 10);
+      const mat = new THREE.MeshStandardMaterial({
+        color: "#ff4444",
+        emissive: "#ff6666",
+        emissiveIntensity: 0.5,
+      });
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.position.copy(pos);
+
+      bullets.current.push({ pos, dir, speed, life, mesh });
+      // attach to the scene: we'll render as primitives below
+    }
+
+    // advance bullets
+    for (let i = bullets.current.length - 1; i >= 0; i--) {
+      const b = bullets.current[i];
+      b.life -= dt;
+      if (b.life <= 0) {
+        b._remove = true;
+      } else {
+        const step = b.dir.clone().multiplyScalar(b.speed * dt);
+        b.pos.add(step);
+        b.mesh.position.copy(b.pos);
+
+        // outside island -> remove
+        const r = Math.hypot(b.pos.x, b.pos.z);
+        if (r > R + 0.5) b._remove = true;
+
+        // collide with pedestrians
+        for (const pr of pedRefs) {
+          const target = pr.current;
+          if (!target || !target.getPosition || !target.becomeGhost) continue;
+          const tp = target.getPosition();
+          const d2 = (b.pos.x - tp.x) ** 2 + (b.pos.z - tp.z) ** 2;
+          if (d2 < 0.18 * 0.18) {
+            try { target.becomeGhost(); } catch {}
+            b._remove = true;
+            break;
+          }
+        }
+      }
+      if (b._remove) {
+        bullets.current.splice(i, 1);
+      }
     }
   });
 
@@ -506,10 +532,24 @@ export default function World() {
       {/* Trees */}
       {trees.map((t, i) => <Tree key={`tree-${i}`} pos={[t[0], 0, t[2]]} scale={t[3]} />)}
 
-      {/* Pedestrians (can scream and become ghosts) */}
+      {/* Pedestrians */}
       {pedestrians.map((p, i) => (
-        <Pedestrian key={`ped-${i}`} start={p.start} color={p.color} doors={doorPositions} clampR={13.6} />
+        <Pedestrian
+          key={`ped-${i}`}
+          ref={pedRefs[i]}
+          start={p.start}
+          color={p.color}
+          doors={doorPositions}
+          clampR={13.6}
+        />
       ))}
+
+      {/* Bullet meshes */}
+      <group>
+        {bullets.current.map((b, i) => (
+          <primitive key={i} object={b.mesh} />
+        ))}
+      </group>
     </group>
   );
 }

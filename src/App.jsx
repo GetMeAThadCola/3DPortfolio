@@ -2,7 +2,6 @@
 import React, { useRef, useEffect } from "react";
 import { Canvas } from "@react-three/fiber";
 import { KeyboardControls, OrbitControls, Environment } from "@react-three/drei";
-
 import ClockTower from "./components/ClockTower.jsx";
 import World from "./components/World.jsx";
 import Player from "./components/Player.jsx";
@@ -14,6 +13,7 @@ import useUI from "./store/useUI.js";
 import useControls from "./store/useControls.js";
 import "./styles.css";
 
+/* ------------------ LINKS ------------------ */
 const LINKS = {
   resumeUrl: "/resume.pdf",
   githubUrl: "https://github.com/GetMeAThadCola",
@@ -22,6 +22,7 @@ const LINKS = {
   moreinfoUrl: "https://hunter-resume.vercel.app",
 };
 
+/* ------------------ Steering UI (mobile joystick) ------------------ */
 function SteeringUI() {
   const setSteer = useControls((s) => s.setSteer);
 
@@ -30,9 +31,10 @@ function SteeringUI() {
   const dragging = useRef(false);
   const center = useRef({ x: 0, y: 0 });
 
-  const maxRadius = 70;
+  const maxRadius = 70;  // px joystick radius
   const hitboxSize = 240;
 
+  // update center on resize
   useEffect(() => {
     const updateCenter = () => {
       const base = baseRef.current;
@@ -61,7 +63,8 @@ function SteeringUI() {
       const vy = Math.max(-1, Math.min(1, ny / maxRadius));
 
       if (knobRef.current) {
-        knobRef.current.style.transform = `translate(-50%, -50%) translate(${nx}px, ${ny}px)`;
+        knobRef.current.style.transform =
+          `translate(-50%, -50%) translate(${nx}px, ${ny}px)`;
       }
       setSteer(vx, vy);
 
@@ -75,9 +78,9 @@ function SteeringUI() {
       if (knobRef.current) {
         knobRef.current.style.transform = `translate(-50%, -50%) translate(0px, 0px)`;
       }
-      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mousemove", move, { passive: false });
       window.removeEventListener("mouseup", end);
-      window.removeEventListener("touchmove", move);
+      window.removeEventListener("touchmove", move, { passive: false });
       window.removeEventListener("touchend", end);
       window.removeEventListener("touchcancel", end);
     };
@@ -101,7 +104,6 @@ function SteeringUI() {
     if (!el) return;
     el.addEventListener("mousedown", start);
     el.addEventListener("touchstart", start, { passive: false });
-
     return () => {
       el.removeEventListener("mousedown", start);
       el.removeEventListener("touchstart", start);
@@ -124,8 +126,140 @@ function SteeringUI() {
   );
 }
 
+/* ------------------ On-Foot avatar (inline component) ------------------ */
+function OnFoot() {
+  const ref = useRef();
+  const heading = useRef(0);
+
+  const steer = useControls((s) => s.steer);
+  const setFootPose = useControls((s) => s.setFootPose);
+  const setPos = useControls.getState ? useControls.getState().setPos : null; // fallback if not in store
+  const setPlayerPos = setPos || (()=>{});
+  const { camera } = require("@react-three/fiber").useThree();
+
+  const WALK_SPEED = 2.6;
+  const TURN_RATE  = 2.8;
+  const RADIUS_MAX = 13.5;
+  const CAM_BACK   = 3.6;
+  const CAM_UP     = 2.2;
+
+  useEffect(() => {
+    if (!ref.current) return;
+  }, []);
+
+  require("@react-three/fiber").useFrame((_, dt) => {
+    if (!ref.current) return;
+
+    heading.current += steer.x * TURN_RATE * dt;
+
+    const forward = -steer.y;
+    const dirX = Math.sin(heading.current);
+    const dirZ = Math.cos(heading.current);
+
+    ref.current.position.x += dirX * forward * WALK_SPEED * dt;
+    ref.current.position.z += dirZ * forward * WALK_SPEED * dt;
+    ref.current.position.y = 0.02;
+
+    const r = Math.hypot(ref.current.position.x, ref.current.position.z);
+    if (r > RADIUS_MAX) {
+      const t = RADIUS_MAX / r;
+      ref.current.position.x *= t;
+      ref.current.position.z *= t;
+    }
+
+    ref.current.rotation.y = heading.current;
+
+    const p = ref.current.position;
+    const camX = p.x - Math.sin(heading.current) * CAM_BACK;
+    const camZ = p.z - Math.cos(heading.current) * CAM_BACK;
+    camera.position.lerp({ x: camX, y: p.y + CAM_UP, z: camZ }, 0.14);
+    camera.lookAt(p.x, p.y + 0.9, p.z);
+
+    // share foot pose (for shooting) + player pos for prompts
+    setFootPose({ x: p.x, y: p.y, z: p.z, heading: heading.current });
+    // if your player store has setPos, update it:
+    try { setPlayerPos(p.x, p.y, p.z); } catch {}
+  });
+
+  return (
+    <group ref={ref} position={[0, 0.02, 2.5]}>
+      <mesh castShadow>
+        <capsuleGeometry args={[0.18, 0.6, 6, 12]} />
+        <meshStandardMaterial color="#f59e0b" />
+      </mesh>
+      <mesh position={[0, 0.45, 0.16]}>
+        <sphereGeometry args={[0.06, 12, 12]} />
+        <meshStandardMaterial emissive="#ffffff" emissiveIntensity={0.6} color="#eeeeee" />
+      </mesh>
+    </group>
+  );
+}
+
+/* ------------------ Hop & Shoot Buttons (overlay DOM) ------------------ */
+function HopButton({ corner = "left" }) {
+  const mode = useControls((s) => s.mode);
+  const toggleMode = useControls((s) => s.toggleMode);
+  const isRight = corner === "right";
+  const style = {
+    position: "fixed",
+    bottom: "calc(92px + env(safe-area-inset-bottom))",
+    [isRight ? "right" : "left"]: "16px",
+    zIndex: 2147483647,
+    padding: "12px 16px",
+    borderRadius: 14,
+    border: "none",
+    fontSize: 14,
+    fontWeight: 800,
+    letterSpacing: "0.3px",
+    color: "#fff",
+    background: "rgba(0,0,0,.78)",
+    boxShadow: "0 6px 18px rgba(0,0,0,.25)",
+    pointerEvents: "auto",
+  };
+  return (
+    <button style={style} onClick={toggleMode}>
+      {mode === "car" ? "Hop Out" : "Drive"}
+    </button>
+  );
+}
+
+function ShootButton({ corner = "right" }) {
+  const mode = useControls((s) => s.mode);
+  const footPose = useControls((s) => s.footPose);
+  const spawnBullet = useControls((s) => s.spawnBullet);
+  if (mode !== "foot") return null;
+
+  const isRight = corner === "right";
+  const style = {
+    position: "fixed",
+    bottom: "calc(20px + env(safe-area-inset-bottom))",
+    [isRight ? "right" : "left"]: "16px",
+    zIndex: 2147483647,
+    padding: "16px 20px",
+    borderRadius: 18,
+    border: "none",
+    fontSize: 16,
+    fontWeight: 800,
+    letterSpacing: "0.4px",
+    color: "#fff",
+    background: "linear-gradient(180deg, #ff3b3b, #d92626)",
+    boxShadow: "0 0 14px rgba(255,60,60,.7), 0 0 30px rgba(255,60,60,.4)",
+    pointerEvents: "auto",
+  };
+  const onShoot = () => {
+    const { x, y, z, heading } = footPose;
+    const dir = [Math.sin(heading || 0), 0, Math.cos(heading || 0)];
+    const pos = [ (x||0) + dir[0]*0.35, (y||0.02) + 0.25, (z||0) + dir[2]*0.35 ];
+    spawnBullet({ pos, dir, speed: 18 });
+    if (navigator.vibrate) navigator.vibrate(10);
+  };
+  return <button style={style} onClick={onShoot}>Shoot</button>;
+}
+
+/* ------------------ App ------------------ */
 export default function App() {
   const { resumeOpen, closeResume } = useUI();
+  const mode = useControls((s) => s.mode);
 
   return (
     <>
@@ -137,10 +271,9 @@ export default function App() {
           { name: "right", keys: ["ArrowRight", "KeyD"] },
         ]}
       >
-        <Canvas shadows dpr={[1, 2]} camera={{ position: [9, 9, 9], fov: 55 }}>
+        <Canvas shadows camera={{ position: [9, 9, 9], fov: 55 }}>
           <color attach="background" args={["#0b0f1a"]} />
           <fog attach="fog" args={["#0b0f1a", 12, 50]} />
-
           <ambientLight intensity={0.55} />
           <directionalLight
             position={[10, 14, 8]}
@@ -149,29 +282,31 @@ export default function App() {
             shadow-mapSize-width={1024}
             shadow-mapSize-height={1024}
           />
-
           <Environment preset="city" />
 
           <Scenery
             islandRadius={14}
             roadBand={1.2}
             buildingZones={[
-              { x: 0,  z: -4, r: 1.6 }, // Resume
-              { x: 4,  z: 0,  r: 1.8 }, // GitHub
-              { x: -4, z: 0,  r: 1.6 }, // LinkedIn
-              { x: 0,  z: 4,  r: 1.9 }, // Projects
+              { x: 0,  z: -4, r: 1.6 },  // Resume
+              { x: 4,  z: 0,  r: 1.8 },  // GitHub
+              { x: -4, z: 0,  r: 1.6 },  // LinkedIn
+              { x: 0,  z: 4,  r: 1.9 },  // Projects
             ]}
             seed={1337}
             counts={{ poles: 14, signs: 12, grass: 150, bushes: 70 }}
           />
 
           <World />
-          <Player />
 
+          {/* Drive or Walk */}
+          {mode === "car" ? <Player /> : <OnFoot />}
+
+          {/* Landmarks */}
           <ClockTower position={[-8, 0, -8]} height={4.2} faceSize={1.2} />
           <ClockTower position={[8, 0, -8]} height={4.2} faceSize={1.2} />
 
-          {/* Valid hex (no alpha in #RRGGBB) */}
+          {/* Stations */}
           <BuildingStation
             position={[0, 0, -4]}
             size={[2.0, 1.4, 1.4]}
@@ -223,7 +358,7 @@ export default function App() {
           <div>
             <div className="brand">Hunter Carbone · Cloud/DevOps 3D Portfolio</div>
             <div className="hint">
-              Push the wheel to drive (up = forward). Press <b>E</b> or tap <b>Enter</b> near a neon building.
+              Push the wheel to drive (up = forward). Press <b>E</b> near a building with a neon sign
             </div>
           </div>
           <div className="actions">
@@ -234,12 +369,11 @@ export default function App() {
         </div>
       </div>
 
-      {/* Touch wheel (usually bottom-left) */}
+      {/* Overlays */}
       <SteeringUI />
-
-      {/* Enter button pinned to the opposite corner (bottom-right).
-         Change to corner="left" if your wheel is on the right. */}
       <EnterButton corner="right" label="Enter" />
+      <HopButton corner="left" />
+      <ShootButton corner="right" />
 
       {resumeOpen && (
         <div className="modal-backdrop" onClick={closeResume}>
