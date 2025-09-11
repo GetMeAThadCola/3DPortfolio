@@ -1,7 +1,9 @@
 // src/App.jsx
 import React, { useRef, useEffect } from "react";
-import { Canvas, useThree, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { KeyboardControls, OrbitControls, Environment } from "@react-three/drei";
+import * as THREE from "three";
+
 import ClockTower from "./components/ClockTower.jsx";
 import World from "./components/World.jsx";
 import Player from "./components/Player.jsx";
@@ -12,6 +14,7 @@ import EnterButton from "./components/EnterButton.jsx";
 import useUI from "./store/useUI.js";
 import useControls from "./store/useControls.js";
 import usePlayer from "./store/usePlayer.js";
+
 import "./styles.css";
 
 const LINKS = {
@@ -22,9 +25,10 @@ const LINKS = {
   moreinfoUrl: "https://hunter-resume.vercel.app",
 };
 
-/* ------------------ Steering UI (mobile joystick) ------------------ */
+/* ---------------- Steering UI (only in car mode) ---------------- */
 function SteeringUI() {
   const setSteer = useControls((s) => s.setSteer);
+  const mode = useControls((s) => s.mode);
 
   const knobRef = useRef(null);
   const baseRef = useRef(null);
@@ -49,6 +53,8 @@ function SteeringUI() {
   useEffect(() => {
     const move = (e) => {
       if (!dragging.current) return;
+      if (mode !== "car") return; // guard if user hopped out mid-drag
+
       const p = "touches" in e ? e.touches[0] : e;
       if (!p) return;
       const dx = p.clientX - center.current.x;
@@ -62,8 +68,7 @@ function SteeringUI() {
       const vy = Math.max(-1, Math.min(1, ny / maxRadius));
 
       if (knobRef.current) {
-        knobRef.current.style.transform =
-          `translate(-50%, -50%) translate(${nx}px, ${ny}px)`;
+        knobRef.current.style.transform = `translate(-50%, -50%) translate(${nx}px, ${ny}px)`;
       }
       setSteer(vx, vy);
 
@@ -77,14 +82,15 @@ function SteeringUI() {
       if (knobRef.current) {
         knobRef.current.style.transform = `translate(-50%, -50%) translate(0px, 0px)`;
       }
-      window.removeEventListener("mousemove", move, { passive: false });
+      window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", end);
-      window.removeEventListener("touchmove", move, { passive: false });
+      window.removeEventListener("touchmove", move);
       window.removeEventListener("touchend", end);
       window.removeEventListener("touchcancel", end);
     };
 
     const start = (e) => {
+      if (mode !== "car") return; // ignore if not in car
       dragging.current = true;
       const base = baseRef.current;
       if (base) {
@@ -103,6 +109,7 @@ function SteeringUI() {
     if (!el) return;
     el.addEventListener("mousedown", start);
     el.addEventListener("touchstart", start, { passive: false });
+
     return () => {
       el.removeEventListener("mousedown", start);
       el.removeEventListener("touchstart", start);
@@ -112,7 +119,9 @@ function SteeringUI() {
       window.removeEventListener("touchend", end);
       window.removeEventListener("touchcancel", end);
     };
-  }, [setSteer]);
+  }, [setSteer, mode]);
+
+  if (mode !== "car") return null; // only render in car mode
 
   return (
     <div className="drive-ui">
@@ -125,147 +134,32 @@ function SteeringUI() {
   );
 }
 
-/* ------------------ On-Foot avatar ------------------ */
-function OnFoot() {
-  const ref = useRef();
-  const heading = useRef(0);
-  const poseRef = useRef({ x: 0, y: 0, z: 0, heading: 0 });
-
-  const steer = useControls((s) => s.steer);
-  const setPos = usePlayer((s) => s.setPos);
+/* --- Capture camera forward for bullets --- */
+function CameraProbe() {
   const { camera } = useThree();
-
-  const WALK_SPEED = 2.6;
-  const TURN_RATE  = 2.8;
-  const RADIUS_MAX = 13.5;
-  const CAM_BACK   = 3.6;
-  const CAM_UP     = 2.2;
-
-  useEffect(() => {
-    // Expose a safe getter for the shoot button
-    window.__getFootPose = () => poseRef.current;
-    return () => { delete window.__getFootPose; };
-  }, []);
-
-  useFrame((_, dt) => {
-    if (!ref.current) return;
-
-    heading.current += steer.x * TURN_RATE * dt;
-
-    const forward = -steer.y;
-    const dirX = Math.sin(heading.current);
-    const dirZ = Math.cos(heading.current);
-
-    ref.current.position.x += dirX * forward * WALK_SPEED * dt;
-    ref.current.position.z += dirZ * forward * WALK_SPEED * dt;
-    ref.current.position.y = 0.02;
-
-    const r = Math.hypot(ref.current.position.x, ref.current.position.z);
-    if (r > RADIUS_MAX) {
-      const t = RADIUS_MAX / r;
-      ref.current.position.x *= t;
-      ref.current.position.z *= t;
-    }
-
-    ref.current.rotation.y = heading.current;
-
-    const p = ref.current.position;
-    const camX = p.x - Math.sin(heading.current) * CAM_BACK;
-    const camZ = p.z - Math.cos(heading.current) * CAM_BACK;
-    camera.position.lerp({ x: camX, y: p.y + CAM_UP, z: camZ }, 0.14);
-    camera.lookAt(p.x, p.y + 0.9, p.z);
-
-    // Update shared pose for building-enter prompts & the global getter
-    setPos(p.x, p.y, p.z);
-    poseRef.current = { x: p.x, y: p.y, z: p.z, heading: heading.current };
+  useFrame(() => {
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+    window.__camDir = [dir.x, dir.y, dir.z];
   });
-
-  return (
-    <group ref={ref} position={[0, 0.02, 2.5]}>
-      <mesh castShadow>
-        <capsuleGeometry args={[0.18, 0.6, 6, 12]} />
-        <meshStandardMaterial color="#f59e0b" />
-      </mesh>
-      <mesh position={[0, 0.45, 0.16]}>
-        <sphereGeometry args={[0.06, 12, 12]} />
-        <meshStandardMaterial emissive="#ffffff" emissiveIntensity={0.6} color="#eeeeee" />
-      </mesh>
-    </group>
-  );
+  return null;
 }
 
-/* ------------------ Hop & Shoot Buttons (DOM overlays) ------------------ */
-function HopButton({ corner = "left" }) {
-  const mode = useControls((s) => s.mode);
-  const toggleMode = useControls((s) => s.toggleMode);
-  const isRight = corner === "right";
-  const style = {
-    position: "fixed",
-    bottom: "calc(92px + env(safe-area-inset-bottom))",
-    [isRight ? "right" : "left"]: "16px",
-    zIndex: 2147483647,
-    padding: "12px 16px",
-    borderRadius: 14,
-    border: "none",
-    fontSize: 14,
-    fontWeight: 800,
-    letterSpacing: "0.3px",
-    color: "#fff",
-    background: "rgba(0,0,0,.78)",
-    boxShadow: "0 6px 18px rgba(0,0,0,.25)",
-    pointerEvents: "auto",
-    touchAction: "manipulation",
-  };
-  return (
-    <button style={style} onClick={toggleMode}>
-      {mode === "car" ? "Hop Out" : "Drive"}
-    </button>
-  );
-}
-
-function ShootButton({ corner = "right" }) {
-  const mode = useControls((s) => s.mode);
-  if (mode !== "foot") return null;
-
-  const isRight = corner === "right";
-  const style = {
-    position: "fixed",
-    bottom: "calc(20px + env(safe-area-inset-bottom))",
-    [isRight ? "right" : "left"]: "16px",
-    zIndex: 2147483647,
-    padding: "16px 20px",
-    borderRadius: 18,
-    border: "none",
-    fontSize: 16,
-    fontWeight: 800,
-    letterSpacing: "0.4px",
-    color: "#fff",
-    background: "linear-gradient(180deg, #ff3b3b, #d92626)",
-    boxShadow: "0 0 14px rgba(255,60,60,.7), 0 0 30px rgba(255,60,60,.4)",
-    pointerEvents: "auto",
-    touchAction: "manipulation",
-  };
-  const onShoot = () => {
-    try {
-      const getPose = window.__getFootPose;
-      const spawn = window.__spawnBullet;
-      if (!getPose || !spawn) return;
-
-      const pose = getPose();
-      const heading = pose.heading || 0;
-      const dir = [Math.sin(heading), 0, Math.cos(heading)];
-      const pos = [pose.x + dir[0] * 0.35, (pose.y || 0.02) + 0.25, pose.z + dir[2] * 0.35];
-      spawn({ pos, dir, speed: 18 });
-      if (navigator.vibrate) navigator.vibrate(10);
-    } catch {}
-  };
-  return <button style={style} onClick={onShoot}>Shoot</button>;
-}
-
-/* ------------------ App ------------------ */
 export default function App() {
   const { resumeOpen, closeResume } = useUI();
   const mode = useControls((s) => s.mode);
+  const toggleMode = useControls((s) => s.toggleMode);
+
+  const handleShoot = () => {
+    if (mode !== "foot") return;
+    const pos = usePlayer.getState().pos || [0, 0.25, 0];
+    const dir = window.__camDir || [0, 0, -1];
+    // spawn slightly above ground
+    window.__spawnBullet?.({
+      pos: [pos[0], 0.45, pos[2]],
+      dir,
+      speed: 18,
+    });
+  };
 
   return (
     <>
@@ -280,6 +174,7 @@ export default function App() {
         <Canvas shadows camera={{ position: [9, 9, 9], fov: 55 }}>
           <color attach="background" args={["#0b0f1a"]} />
           <fog attach="fog" args={["#0b0f1a", 12, 50]} />
+
           <ambientLight intensity={0.55} />
           <directionalLight
             position={[10, 14, 8]}
@@ -288,24 +183,24 @@ export default function App() {
             shadow-mapSize-width={1024}
             shadow-mapSize-height={1024}
           />
+
           <Environment preset="city" />
 
           <Scenery
             islandRadius={14}
             roadBand={1.2}
             buildingZones={[
-              { x: 0,  z: -4, r: 1.6 },  // Resume
-              { x: 4,  z: 0,  r: 1.8 },  // GitHub
-              { x: -4, z: 0,  r: 1.6 },  // LinkedIn
-              { x: 0,  z: 4,  r: 1.9 },  // Projects
+              { x: 0, z: -4, r: 1.6 }, // Resume
+              { x: 4, z: 0, r: 1.8 },  // GitHub
+              { x: -4, z: 0, r: 1.6 }, // LinkedIn
+              { x: 0, z: 4, r: 1.9 },  // Projects
             ]}
             seed={1337}
             counts={{ poles: 14, signs: 12, grass: 150, bushes: 70 }}
           />
 
           <World />
-
-          {mode === "car" ? <Player /> : <OnFoot />}
+          <Player />
 
           <ClockTower position={[-8, 0, -8]} height={4.2} faceSize={1.2} />
           <ClockTower position={[8, 0, -8]} height={4.2} faceSize={1.2} />
@@ -352,6 +247,7 @@ export default function App() {
           />
 
           <OrbitControls makeDefault maxPolarAngle={Math.PI * 0.49} />
+          <CameraProbe />
         </Canvas>
       </KeyboardControls>
 
@@ -360,6 +256,9 @@ export default function App() {
         <div className="hud-top">
           <div>
             <div className="brand">Hunter Carbone · Cloud/DevOps 3D Portfolio</div>
+            <div className="hint">
+              Push the wheel to drive (up = forward). Press <b>E</b> near a building with a neon sign
+            </div>
           </div>
           <div className="actions">
             <a className="button" href={LINKS.resumeUrl} download>Download Resume</a>
@@ -369,11 +268,34 @@ export default function App() {
         </div>
       </div>
 
-      {/* Overlays */}
+      {/* Steering (only in car mode) */}
       <SteeringUI />
-      <EnterButton corner="right" label="Enter" />
-      <HopButton corner="left" />
-      <ShootButton corner="right" />
+
+      {/* Enter button (your existing component) */}
+      <EnterButton />
+
+      {/* Hop & Shoot controls (bottom-left; opposite of wheel) */}
+      <div style={{
+        position: "fixed",
+        left: 16,
+        bottom: 16,
+        display: "flex",
+        gap: 12,
+        zIndex: 50,
+        pointerEvents: "auto",
+      }}>
+        <button className="button" onClick={toggleMode}>
+          {mode === "car" ? "Hop Out" : "Drive"}
+        </button>
+        <button
+          className="button"
+          onClick={handleShoot}
+          disabled={mode !== "foot"}
+          title={mode !== "foot" ? "Available on foot" : "Shoot"}
+        >
+          🔫 Shoot
+        </button>
+      </div>
 
       {resumeOpen && (
         <div className="modal-backdrop" onClick={closeResume}>
