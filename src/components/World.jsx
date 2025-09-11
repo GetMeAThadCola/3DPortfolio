@@ -254,7 +254,7 @@ const Pedestrian = forwardRef(function Pedestrian(
       <group ref={normalG}>
         <mesh castShadow>
           <cylinderGeometry args={[0.08, 0.09, 0.35, 12]} />
-          <meshStandardMaterial color={color} />
+          <meshStandardMaterial color="#ff9f1c" />
         </mesh>
         <mesh position={[0, 0.25, 0]} castShadow>
           <sphereGeometry args={[0.09, 16, 16]} />
@@ -289,7 +289,6 @@ export default function World() {
   const setNearestStation = useControls((s) => s.setNearestStation);
   const setCanEnter = useControls((s) => s.setCanEnter);
 
-  const bulletQueueRef = useRef([]); // local mirror of store bullets
   const bullets = useRef([]); // { pos, dir, speed, life, mesh }
   const lastNearestLabel = useRef(null);
 
@@ -396,8 +395,7 @@ export default function World() {
 
   /** -------- Proximity for Enter button (larger area, nearest station) -------- */
   useFrame(() => {
-    if (!playerPos) return;
-    const [px, , pz] = playerPos;
+    const [px, , pz] = playerPos || [0, 0, 0];
 
     let nearest = null;
     let minD2 = Infinity;
@@ -412,10 +410,10 @@ export default function World() {
     }
 
     const label = nearest ? nearest.label : null;
-    if (label !== lastNearestLabel.current) {
-      lastNearestLabel.current = label;
-      if (setNearestStation) setNearestStation(nearest);
-      if (setCanEnter) setCanEnter(!!nearest);
+    if (label !== (World._lastNearestLabel || null)) {
+      World._lastNearestLabel = label;
+      setNearestStation?.(nearest);
+      setCanEnter?.(!!nearest);
     }
   });
 
@@ -442,7 +440,6 @@ export default function World() {
       mesh.position.copy(pos);
 
       bullets.current.push({ pos, dir, speed, life, mesh });
-      // attach to the scene: we'll render as primitives below
     }
 
     // advance bullets
@@ -450,31 +447,31 @@ export default function World() {
       const b = bullets.current[i];
       b.life -= dt;
       if (b.life <= 0) {
-        b._remove = true;
-      } else {
-        const step = b.dir.clone().multiplyScalar(b.speed * dt);
-        b.pos.add(step);
-        b.mesh.position.copy(b.pos);
-
-        // outside island -> remove
-        const r = Math.hypot(b.pos.x, b.pos.z);
-        if (r > R + 0.5) b._remove = true;
-
-        // collide with pedestrians
-        for (const pr of pedRefs) {
-          const target = pr.current;
-          if (!target || !target.getPosition || !target.becomeGhost) continue;
-          const tp = target.getPosition();
-          const d2 = (b.pos.x - tp.x) ** 2 + (b.pos.z - tp.z) ** 2;
-          if (d2 < 0.18 * 0.18) {
-            try { target.becomeGhost(); } catch {}
-            b._remove = true;
-            break;
-          }
-        }
-      }
-      if (b._remove) {
         bullets.current.splice(i, 1);
+        continue;
+      }
+      const step = b.dir.clone().multiplyScalar(b.speed * dt);
+      b.pos.add(step);
+      b.mesh.position.copy(b.pos);
+
+      // outside island -> remove
+      const r = Math.hypot(b.pos.x, b.pos.z);
+      if (r > R + 0.5) {
+        bullets.current.splice(i, 1);
+        continue;
+      }
+
+      // collide with pedestrians
+      for (const pr of pedRefs) {
+        const target = pr.current;
+        if (!target || !target.getPosition || !target.becomeGhost) continue;
+        const tp = target.getPosition();
+        const d2 = (b.pos.x - tp.x) ** 2 + (b.pos.z - tp.z) ** 2;
+        if (d2 < 0.18 * 0.18) {
+          try { target.becomeGhost(); } catch {}
+          bullets.current.splice(i, 1);
+          break;
+        }
       }
     }
   });

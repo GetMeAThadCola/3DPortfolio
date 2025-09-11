@@ -1,6 +1,6 @@
 // src/App.jsx
 import React, { useRef, useEffect } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree, useFrame } from "@react-three/fiber";
 import { KeyboardControls, OrbitControls, Environment } from "@react-three/drei";
 import ClockTower from "./components/ClockTower.jsx";
 import World from "./components/World.jsx";
@@ -11,6 +11,7 @@ import EnterButton from "./components/EnterButton.jsx";
 
 import useUI from "./store/useUI.js";
 import useControls from "./store/useControls.js";
+import usePlayer from "./store/usePlayer.js";
 import "./styles.css";
 
 /* ------------------ LINKS ------------------ */
@@ -126,16 +127,15 @@ function SteeringUI() {
   );
 }
 
-/* ------------------ On-Foot avatar (inline component) ------------------ */
+/* ------------------ On-Foot avatar ------------------ */
 function OnFoot() {
   const ref = useRef();
   const heading = useRef(0);
 
   const steer = useControls((s) => s.steer);
   const setFootPose = useControls((s) => s.setFootPose);
-  const setPos = useControls.getState ? useControls.getState().setPos : null; // fallback if not in store
-  const setPlayerPos = setPos || (()=>{});
-  const { camera } = require("@react-three/fiber").useThree();
+  const setPos = usePlayer((s) => s.setPos);
+  const { camera } = useThree();
 
   const WALK_SPEED = 2.6;
   const TURN_RATE  = 2.8;
@@ -143,11 +143,7 @@ function OnFoot() {
   const CAM_BACK   = 3.6;
   const CAM_UP     = 2.2;
 
-  useEffect(() => {
-    if (!ref.current) return;
-  }, []);
-
-  require("@react-three/fiber").useFrame((_, dt) => {
+  useFrame((_, dt) => {
     if (!ref.current) return;
 
     heading.current += steer.x * TURN_RATE * dt;
@@ -177,8 +173,7 @@ function OnFoot() {
 
     // share foot pose (for shooting) + player pos for prompts
     setFootPose({ x: p.x, y: p.y, z: p.z, heading: heading.current });
-    // if your player store has setPos, update it:
-    try { setPlayerPos(p.x, p.y, p.z); } catch {}
+    setPos(p.x, p.y, p.z);
   });
 
   return (
@@ -372,6 +367,8 @@ export default function App() {
       {/* Overlays */}
       <SteeringUI />
       <EnterButton corner="right" label="Enter" />
+
+      {/* Hop & Shoot (DOM) */}
       <HopButton corner="left" />
       <ShootButton corner="right" />
 
