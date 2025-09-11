@@ -6,10 +6,14 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "zustand": "zustand/index.mjs",
+      // DO NOT alias "zustand" itself (causes prefix collisions).
+      // Only alias sub-entries if your build ever needs them:
+      "zustand/traditional": "zustand/traditional/index.mjs",
+      "zustand/vanilla": "zustand/vanilla/index.mjs",
       "zustand/middleware": "zustand/middleware/index.mjs",
+      // If you never import these subpaths directly, you can even remove all three lines.
     },
   },
-  // Optional but helpful when debugging Amplify:
+  // Optional: sourcemaps help debug CI builds
   // build: { sourcemap: true },
 });

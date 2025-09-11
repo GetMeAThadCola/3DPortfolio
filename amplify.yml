@@ -3,8 +3,10 @@ frontend:
   phases:
     preBuild:
       commands:
+        # Ensure Node 22 (new Amplify images have nvm)
+        - if command -v nvm >/dev/null 2>&1; then nvm install 22 && nvm use 22; fi
         - node -v
-        # Use lockfile if present; fall back to npm i so builds never fail
+        # Install deps. If lockfile missing in CI, fall back to npm i
         - npm ci || npm i
     build:
       commands:
