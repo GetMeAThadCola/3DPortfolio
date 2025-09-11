@@ -139,3 +139,21 @@ body { background: var(--bg); color: var(--fg); font-family: ui-sans-serif, syst
 @media (min-width: 900px){
   .enter-btn{ display: none; }
 }
+/* Neon pulse for the Enter button when near a door */
+@keyframes neonPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 12px rgba(0,229,255,.60),
+      0 0 24px rgba(0,229,255,.30);
+    transform: translateZ(0) scale(1.06);
+  }
+  50% {
+    box-shadow:
+      0 0 22px rgba(0,229,255,.95),
+      0 0 36px rgba(0,229,255,.55);
+    transform: translateZ(0) scale(1.10);
+  }
+}
+.enter-btn.glow {
+  animation: neonPulse 1.5s ease-in-out infinite;
+}

@@ -4,6 +4,7 @@ import { useFrame } from "@react-three/fiber";
 import { PositionalAudio } from "@react-three/drei";
 import * as THREE from "three";
 import usePlayer from "../store/usePlayer.js";
+import useControls from "../store/useControls.js";
 
 /** ---- Tunables ---- */
 const HIT_DIST   = 0.6;   // car→ped collision radius (meters)
@@ -11,9 +12,11 @@ const GHOST_RISE = 0.9;   // m/s upward
 const GHOST_FADE = 0.35;  // opacity per second
 const GHOST_SPIN = 0.6;   // rad/s spin while rising
 
+const ENTER_RADIUS = 1.1; // when within this radius of a door, enable Enter
+
 // Audio (place your file in public/audio/)
 const SCREAM_URL = "/audio/ped_scream.mp3";
-const SCREAM_VOL = 0.7;     // 0..1
+const SCREAM_VOL = 0.7;       // 0..1
 const SCREAM_MIN_RATE = 0.95; // randomize pitch slightly
 const SCREAM_MAX_RATE = 1.10;
 
@@ -160,8 +163,8 @@ function Pedestrian({ start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR =
     if (!a) return;
     try {
       a.setLoop(false);
-      a.setRefDistance(4); // how fast it rolls off
-      a.setVolume(0);      // start silent; we set volume on hit
+      a.setRefDistance(4); // roll-off
+      a.setVolume(0);      // start silent; set on hit
     } catch {/* noop */}
   }, []);
 
@@ -180,7 +183,6 @@ function Pedestrian({ start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR =
       ghostAlpha.current = Math.max(0, ghostAlpha.current - GHOST_FADE * dt);
       ghostMat.opacity = ghostAlpha.current;
 
-      // After fully faded, hide completely
       if (ghostAlpha.current <= 0.01) {
         ref.current.visible = false;
       }
@@ -268,11 +270,11 @@ function Pedestrian({ start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR =
           <sphereGeometry args={[0.09, 16, 16]} />
           <meshStandardMaterial color="#ffcf99" />
         </mesh>
-        {/* Positional scream audio (attached to ped so it comes from the right place) */}
+        {/* Positional scream audio */}
         <PositionalAudio ref={screamRef} url={SCREAM_URL} distance={6} />
       </group>
 
-      {/* Ghost (semi-transparent, glowy) — all parts use the same material so they fade together */}
+      {/* Ghost (semi-transparent, glowy) */}
       <group ref={ghostG} visible={false}>
         {/* Head */}
         <mesh position={[0, 0.22, 0]} material={ghostMat}>
@@ -296,6 +298,11 @@ function Pedestrian({ start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR =
 export default function World() {
   const ground = useRef();
   const R = 14; // island radius
+
+  // For Enter button glow: proximity to door
+  const playerPos = usePlayer((s) => s.pos);
+  const setCanEnter = useControls((s) => s.setCanEnter);
+  const lastCanRef = useRef(false);
 
   useFrame(() => {
     if (ground.current) ground.current.rotation.z += 0.00012;
@@ -366,7 +373,10 @@ export default function World() {
   }, []); // eslint-disable-line
 
   /** doors list for pedestrians (x,z at +Z face of each building) */
-  const doorPositions = useMemo(() => cityBlocks.map(b => [b.x, b.z + b.d / 2 + 0.08]), [cityBlocks]);
+  const doorPositions = useMemo(
+    () => cityBlocks.map(b => [b.x, b.z + b.d / 2 + 0.08]),
+    [cityBlocks]
+  );
 
   /** rim trees (after buildings) */
   const trees = useMemo(() => {
@@ -396,6 +406,25 @@ export default function World() {
       };
     });
   }, [cityBlocks]);
+
+  // ---- Proximity check for Enter button glow ----
+  useFrame(() => {
+    if (!playerPos || doorPositions.length === 0) return;
+    const [px, , pz] = playerPos;
+    let can = false;
+    for (let i = 0; i < doorPositions.length; i++) {
+      const dx = doorPositions[i][0] - px;
+      const dz = doorPositions[i][1] - pz;
+      if (dx * dx + dz * dz <= ENTER_RADIUS * ENTER_RADIUS) {
+        can = true;
+        break;
+      }
+    }
+    if (can !== lastCanRef.current) {
+      lastCanRef.current = can;
+      setCanEnter(can);
+    }
+  });
 
   return (
     <group>
