@@ -22,7 +22,6 @@ const LINKS = {
   moreinfoUrl: "https://hunter-resume.vercel.app",
 };
 
-/** On-screen steering wheel (touch/drag) */
 function SteeringUI() {
   const setSteer = useControls((s) => s.setSteer);
 
@@ -31,10 +30,9 @@ function SteeringUI() {
   const dragging = useRef(false);
   const center = useRef({ x: 0, y: 0 });
 
-  const maxRadius = 70;   // px joystick radius (feel)
-  const hitboxSize = 240; // larger than visual wheel
+  const maxRadius = 70;
+  const hitboxSize = 240;
 
-  // update center on resize
   useEffect(() => {
     const updateCenter = () => {
       const base = baseRef.current;
@@ -47,7 +45,6 @@ function SteeringUI() {
     return () => window.removeEventListener("resize", updateCenter);
   }, []);
 
-  // global capture handlers
   useEffect(() => {
     const move = (e) => {
       if (!dragging.current) return;
@@ -56,12 +53,10 @@ function SteeringUI() {
       const dx = p.clientX - center.current.x;
       const dy = p.clientY - center.current.y;
 
-      // Clamp to stick radius
       const len = Math.hypot(dx, dy) || 1;
       const nx = (dx / len) * Math.min(len, maxRadius);
       const ny = (dy / len) * Math.min(len, maxRadius);
 
-      // Non-linear response (smoother center)
       const vx = Math.max(-1, Math.min(1, nx / maxRadius));
       const vy = Math.max(-1, Math.min(1, ny / maxRadius));
 
@@ -80,7 +75,6 @@ function SteeringUI() {
       if (knobRef.current) {
         knobRef.current.style.transform = `translate(-50%, -50%) translate(0px, 0px)`;
       }
-      // cleanup listeners
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", end);
       window.removeEventListener("touchmove", move);
@@ -90,19 +84,16 @@ function SteeringUI() {
 
     const start = (e) => {
       dragging.current = true;
-      // Immediately update center in case layout shifted
       const base = baseRef.current;
       if (base) {
         const rect = base.getBoundingClientRect();
         center.current = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
       }
-      // attach global listeners
       window.addEventListener("mousemove", move, { passive: false });
       window.addEventListener("mouseup", end);
       window.addEventListener("touchmove", move, { passive: false });
       window.addEventListener("touchend", end);
       window.addEventListener("touchcancel", end);
-
       move(e);
     };
 
@@ -124,11 +115,7 @@ function SteeringUI() {
 
   return (
     <div className="drive-ui">
-      <div
-        className="wheel-hitbox"
-        ref={baseRef}
-        style={{ width: hitboxSize, height: hitboxSize }}
-      >
+      <div className="wheel-hitbox" ref={baseRef} style={{ width: hitboxSize, height: hitboxSize }}>
         <div className="wheel">
           <div className="wheel-knob" ref={knobRef} />
         </div>
@@ -150,11 +137,7 @@ export default function App() {
           { name: "right", keys: ["ArrowRight", "KeyD"] },
         ]}
       >
-        <Canvas
-          shadows
-          dpr={[1, 2]}
-          camera={{ position: [9, 9, 9], fov: 55 }}
-        >
+        <Canvas shadows dpr={[1, 2]} camera={{ position: [9, 9, 9], fov: 55 }}>
           <color attach="background" args={["#0b0f1a"]} />
           <fog attach="fog" args={["#0b0f1a", 12, 50]} />
 
@@ -188,14 +171,14 @@ export default function App() {
           <ClockTower position={[-8, 0, -8]} height={4.2} faceSize={1.2} />
           <ClockTower position={[8, 0, -8]} height={4.2} faceSize={1.2} />
 
-          {/* NOTE: colors fixed to valid 6-digit hex for three.js */}
+          {/* Valid hex (no alpha in #RRGGBB) */}
           <BuildingStation
             position={[0, 0, -4]}
             size={[2.0, 1.4, 1.4]}
             label="Resume"
             url={LINKS.resumeUrl}
             color="#cc512c"
-            neonColor="#00e5ff"  // cyan neon
+            neonColor="#00e5ff"
           />
           <BuildingStation
             position={[10, 0, 0]}
@@ -203,7 +186,7 @@ export default function App() {
             label="GitHub"
             url={LINKS.githubUrl}
             color="#992693"
-            neonColor="#39ff14"  // green
+            neonColor="#39ff14"
           />
           <BuildingStation
             position={[-10, 0, 0]}
@@ -211,7 +194,7 @@ export default function App() {
             label="LinkedIn"
             url={LINKS.linkedinUrl}
             color="#c2bb5e"
-            neonColor="#1da1f2"  // blue
+            neonColor="#1da1f2"
           />
           <BuildingStation
             position={[0, 0, 10]}
@@ -219,7 +202,7 @@ export default function App() {
             label="Projects"
             url={LINKS.projectsUrl}
             color="#317c2f"
-            neonColor="#ff38bd"  // magenta
+            neonColor="#ff38bd"
           />
           <BuildingStation
             position={[3, 0, -5]}
@@ -227,10 +210,9 @@ export default function App() {
             label="More Info"
             url={LINKS.moreinfoUrl}
             color="#317c2f"
-            neonColor="#e5ff00"  // yellow
+            neonColor="#e5ff00"
           />
 
-          {/* Optional: keep for free-look debugging; can remove in production */}
           <OrbitControls makeDefault maxPolarAngle={Math.PI * 0.49} />
         </Canvas>
       </KeyboardControls>
@@ -252,9 +234,12 @@ export default function App() {
         </div>
       </div>
 
-      {/* Touch controls + Mobile Enter button (overlay, outside Canvas) */}
+      {/* Touch wheel (usually bottom-left) */}
       <SteeringUI />
-      <EnterButton />
+
+      {/* Enter button pinned to the opposite corner (bottom-right).
+         Change to corner="left" if your wheel is on the right. */}
+      <EnterButton corner="right" label="Enter" />
 
       {resumeOpen && (
         <div className="modal-backdrop" onClick={closeResume}>
@@ -267,23 +252,13 @@ export default function App() {
             <p className="muted">Quick preview below. Use Download for full view.</p>
             <div className="grid">
               <div className="iframe-wrap">
-                <iframe
-                  src={LINKS.resumeUrl}
-                  title="resume"
-                  style={{ width: "100%", height: 460, border: 0 }}
-                />
+                <iframe src={LINKS.resumeUrl} title="resume" style={{ width: "100%", height: 460, border: 0 }} />
               </div>
               <div>
                 <h3>Quick Links</h3>
-                <div className="row">
-                  <a className="button" href={LINKS.resumeUrl} download>Download Resume</a>
-                </div>
-                <div className="row">
-                  <a className="button" href={LINKS.githubUrl} target="_blank" rel="noreferrer">Open GitHub</a>
-                </div>
-                <div className="row">
-                  <a className="button" href={LINKS.linkedinUrl} target="_blank" rel="noreferrer">Open LinkedIn</a>
-                </div>
+                <div className="row"><a className="button" href={LINKS.resumeUrl} download>Download Resume</a></div>
+                <div className="row"><a className="button" href={LINKS.githubUrl} target="_blank" rel="noreferrer">Open GitHub</a></div>
+                <div className="row"><a className="button" href={LINKS.linkedinUrl} target="_blank" rel="noreferrer">Open LinkedIn</a></div>
               </div>
             </div>
           </div>
