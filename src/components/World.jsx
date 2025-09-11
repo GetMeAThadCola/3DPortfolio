@@ -24,7 +24,7 @@ const SCREAM_VOL = 0.7;
 const SCREAM_MIN_RATE = 0.95;
 const SCREAM_MAX_RATE = 1.10;
 
-/** Stations (must match App.jsx) */
+/** Stations (optional: match App.jsx label/urls if you use them in HUD) */
 const LINKS = {
   resumeUrl: "/resume.pdf",
   githubUrl: "https://github.com/GetMeAThadCola",
@@ -40,7 +40,7 @@ const STATIONS = [
   { label: "More Info", x:  3,  z: -5, r: 2.8, url: LINKS.moreinfoUrl },
 ];
 
-/** ------- Small props ------- */
+/* ---------- Small props ---------- */
 function Tree({ pos = [0, 0, 0], scale = 1 }) {
   return (
     <group position={pos} scale={scale}>
@@ -114,7 +114,7 @@ function BackgroundBuilding({ x, z, w, d, h, color }) {
   );
 }
 
-/** ------- Pedestrian (forwardRef with API for bullets) ------- */
+/* ---------- Pedestrian (forwardRef with API for bullets) ---------- */
 const Pedestrian = forwardRef(function Pedestrian(
   { start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR = 13.6 },
   apiRef
@@ -149,13 +149,15 @@ const Pedestrian = forwardRef(function Pedestrian(
   useImperativeHandle(apiRef, () => ({
     becomeGhost: () => {
       if (isGhost.current) return;
-      // scream once on hit (bullet or car)
+      // scream once (bullet or car)
       if (!screamed.current && screamRef.current) {
         try {
           const a = screamRef.current;
           a.setVolume(SCREAM_VOL);
           if (a.setPlaybackRate) {
-            a.setPlaybackRate(SCREAM_MIN_RATE + Math.random() * (SCREAM_MAX_RATE - SCREAM_MIN_RATE));
+            a.setPlaybackRate(
+              SCREAM_MIN_RATE + Math.random() * (SCREAM_MAX_RATE - SCREAM_MIN_RATE)
+            );
           }
           if (!a.isPlaying) a.play();
         } catch {}
@@ -237,7 +239,7 @@ const Pedestrian = forwardRef(function Pedestrian(
       p.x *= t; p.z *= t;
     }
 
-    // ONLY car → ped contact turns into ghost (mode === "car")
+    // ONLY car→ped proximity ghosts
     if (mode === "car" && playerPos) {
       const [px, , pz] = playerPos;
       const d = Math.hypot(px - p.x, pz - p.z);
@@ -261,6 +263,7 @@ const Pedestrian = forwardRef(function Pedestrian(
         </mesh>
         <PositionalAudio ref={screamRef} url={SCREAM_URL} distance={6} />
       </group>
+
       {/* ghost */}
       <group ref={ghostG} visible={false}>
         <mesh position={[0, 0.22, 0]} material={ghostMat}>
@@ -279,7 +282,7 @@ const Pedestrian = forwardRef(function Pedestrian(
   );
 });
 
-/** ------- World ------- */
+/* ---------- World ---------- */
 export default function World() {
   const ground = useRef();
   const R = 14;
@@ -289,8 +292,8 @@ export default function World() {
   const setCanEnter = useControls((s) => s.setCanEnter);
 
   // bullets live here
-  const bullets = useRef([]);        // active bullets { pos, dir, speed, life, mesh }
-  const bulletQueue = useRef([]);    // spawn queue
+  const bullets = useRef([]);      // { pos, dir, speed, life, mesh, line }
+  const bulletQueue = useRef([]);  // incoming spawns
 
   // expose a safe spawn API for the Shoot button
   useEffect(() => {
@@ -305,14 +308,14 @@ export default function World() {
     if (ground.current) ground.current.rotation.z += 0.00012;
   });
 
-  /** roads (keep clear) */
+  /* roads (keep clear) */
   const laneHalf = 0.8;
   const isInRoad = (x, z) => {
     const near = (v, t) => Math.abs(v - t) <= laneHalf + 0.05;
     return near(z, 0) || near(z, 2.2) || near(z, -2.2) || near(x, 0) || near(x, 2.2) || near(x, -2.2);
   };
 
-  /** occupancy helpers */
+  /* occupancy helpers */
   const OCC = useRef(new Set()).current;
   const key = (x, z) => `${Math.round(x * 10)},${Math.round(z * 10)}`;
   const markOcc = (x, z, r = 0.9) => {
@@ -325,7 +328,7 @@ export default function World() {
   };
   const isOcc = (x, z) => OCC.has(key(x, z));
 
-  // pre-mark: roads + station pads
+  /* pre-mark station pads */
   const stationPoints = useMemo(() => STATIONS.map(s => [s.x, s.z]), []);
   useMemo(() => {
     for (let gx = -R; gx <= R; gx += 0.4) {
@@ -337,7 +340,7 @@ export default function World() {
     stationPoints.forEach(([x,z]) => markOcc(x, z, 1.6));
   }, [stationPoints]);
 
-  /** palette + blocks */
+  /* palette + blocks */
   const palette = ["#1d4ed8","#0ea5e9","#10b981","#16a34a","#f59e0b","#ef4444","#a855f7","#fb7185","#22d3ee","#f97316","#84cc16","#06b6d4","#eab308","#f43f5e","#60a5fa"];
 
   const cityBlocks = useMemo(() => {
@@ -401,10 +404,9 @@ export default function World() {
     [pedestrians.length]
   );
 
-  /** -------- Proximity for Enter button (larger area, nearest station) -------- */
+  /* ---- Proximity for Enter button (larger area, nearest station) ---- */
   useFrame(() => {
     const [px, , pz] = playerPos || [0, 0, 0];
-
     let nearest = null;
     let minD2 = Infinity;
     for (const s of STATIONS) {
@@ -416,34 +418,42 @@ export default function World() {
         nearest = { ...s, dist: Math.sqrt(d2) };
       }
     }
-
     setNearestStation?.(nearest || null);
     setCanEnter?.(!!nearest);
   });
 
-  /** -------- Bullet handling (spawn + move + collide + cull) -------- */
+  /* ---- Bullet handling (spawn + move + collide + cull) ---- */
   useFrame((_, dt) => {
-    // drain queue
+    // Spawn bullets from queue
     while (bulletQueue.current.length > 0) {
       const b = bulletQueue.current.shift();
       const pos = new THREE.Vector3().fromArray(b.pos || [0, 0.25, 0]);
       const dir = new THREE.Vector3().fromArray(b.dir || [0, 0, 1]).normalize();
-      const speed = b.speed ?? 16;
+      const speed = b.speed ?? 18;
       const life = 2.0;
 
-      const geom = new THREE.SphereGeometry(0.06, 10, 10);
+      // Bright projectile
+      const geom = new THREE.SphereGeometry(0.1, 12, 12);
       const mat = new THREE.MeshStandardMaterial({
         color: "#ff4444",
         emissive: "#ff6666",
-        emissiveIntensity: 0.5,
+        emissiveIntensity: 1.2,
+        metalness: 0.1,
+        roughness: 0.4,
       });
       const mesh = new THREE.Mesh(geom, mat);
       mesh.position.copy(pos);
 
-      bullets.current.push({ pos, dir, speed, life, mesh });
+      // Tracer line (tail)
+      const tail = pos.clone().addScaledVector(dir, -0.5);
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([pos.clone(), tail]);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0xffe6e6, linewidth: 2 });
+      const line = new THREE.Line(lineGeo, lineMat);
+
+      bullets.current.push({ pos, dir, speed, life, mesh, line });
     }
 
-    // advance bullets
+    // Advance / collide / cull
     for (let i = bullets.current.length - 1; i >= 0; i--) {
       const b = bullets.current[i];
       b.life -= dt;
@@ -451,13 +461,19 @@ export default function World() {
         bullets.current.splice(i, 1);
         continue;
       }
+
+      // integrate
       const step = b.dir.clone().multiplyScalar(b.speed * dt);
       b.pos.add(step);
       b.mesh.position.copy(b.pos);
 
+      // update tracer tail
+      const tail = b.pos.clone().addScaledVector(b.dir, -0.6);
+      b.line.geometry.setFromPoints([b.pos.clone(), tail]);
+
       // outside island -> remove
       const r = Math.hypot(b.pos.x, b.pos.z);
-      if (r > R + 0.5) {
+      if (r > R + 0.8) {
         bullets.current.splice(i, 1);
         continue;
       }
@@ -468,7 +484,7 @@ export default function World() {
         if (!target || !target.getPosition || !target.becomeGhost) continue;
         const tp = target.getPosition();
         const d2 = (b.pos.x - tp.x) ** 2 + (b.pos.z - tp.z) ** 2;
-        if (d2 < 0.18 * 0.18) {
+        if (d2 < 0.22 * 0.22) { // a bit generous for mobile
           try { target.becomeGhost(); } catch {}
           bullets.current.splice(i, 1);
           break;
@@ -542,10 +558,13 @@ export default function World() {
         />
       ))}
 
-      {/* Bullet meshes */}
+      {/* Bullet meshes + tracers */}
       <group>
         {bullets.current.map((b, i) => (
-          <primitive key={i} object={b.mesh} />
+          <group key={i}>
+            <primitive object={b.mesh} />
+            <primitive object={b.line} />
+          </group>
         ))}
       </group>
     </group>
