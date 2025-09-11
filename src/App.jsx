@@ -1,5 +1,5 @@
 // src/App.jsx
-import React from "react";
+import React, { useRef, useEffect } from "react";
 import { Canvas } from "@react-three/fiber";
 import { Environment, KeyboardControls } from "@react-three/drei";
 
@@ -23,10 +23,103 @@ const LINKS = {
   moreinfoUrl: "https://hunter-resume.vercel.app",
 };
 
+/* ---------- Joystick with knob ---------- */
 function SteeringUI() {
-  // unchanged: your existing wheel UI (kept minimal here)
   const setSteer = useControls((s) => s.setSteer);
-  const radius = 70;
+  const baseRef = useRef(null);
+  const knobRef = useRef(null);
+  const center = useRef({ x: 0, y: 0 });
+  const dragging = useRef(false);
+
+  const stickRadius = 70; // px
+  const hitbox = 240;     // touch area
+
+  // update center when layout changes
+  useEffect(() => {
+    const update = () => {
+      const el = baseRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      center.current = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  // handlers
+  useEffect(() => {
+    const move = (e) => {
+      if (!dragging.current) return;
+      const p = "touches" in e ? e.touches[0] : e;
+      if (!p) return;
+
+      const dx = p.clientX - center.current.x;
+      const dy = p.clientY - center.current.y;
+
+      // clamp to circle
+      const len = Math.hypot(dx, dy);
+      const clamped = Math.min(len, stickRadius);
+      const ux = (dx / (len || 1)) * clamped;
+      const uy = (dy / (len || 1)) * clamped;
+
+      const nx = ux / stickRadius;
+      const ny = uy / stickRadius;
+
+      if (knobRef.current) {
+        knobRef.current.style.transform = `translate(-50%, -50%) translate(${ux}px, ${uy}px)`;
+      }
+      setSteer(nx, ny);
+
+      if (e.cancelable) e.preventDefault();
+    };
+
+    const end = () => {
+      if (!dragging.current) return;
+      dragging.current = false;
+      setSteer(0, 0);
+      if (knobRef.current) {
+        knobRef.current.style.transform = `translate(-50%, -50%) translate(0px, 0px)`;
+      }
+      window.removeEventListener("mousemove", move, { passive: false });
+      window.removeEventListener("mouseup", end);
+      window.removeEventListener("touchmove", move, { passive: false });
+      window.removeEventListener("touchend", end);
+      window.removeEventListener("touchcancel", end);
+    };
+
+    const start = (e) => {
+      dragging.current = true;
+      // recalc center (layout may have shifted)
+      const el = baseRef.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        center.current = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      }
+      window.addEventListener("mousemove", move, { passive: false });
+      window.addEventListener("mouseup", end);
+      window.addEventListener("touchmove", move, { passive: false });
+      window.addEventListener("touchend", end);
+      window.addEventListener("touchcancel", end);
+
+      move(e);
+    };
+
+    const el = baseRef.current;
+    if (!el) return;
+    el.addEventListener("mousedown", start);
+    el.addEventListener("touchstart", start, { passive: false });
+
+    return () => {
+      el.removeEventListener("mousedown", start);
+      el.removeEventListener("touchstart", start);
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", end);
+      window.removeEventListener("touchmove", move);
+      window.removeEventListener("touchend", end);
+      window.removeEventListener("touchcancel", end);
+    };
+  }, [setSteer]);
 
   return (
     <div
@@ -34,54 +127,71 @@ function SteeringUI() {
         position: "fixed",
         left: 18,
         bottom: 18,
-        width: 240,
-        height: 240,
+        width: hitbox,
+        height: hitbox,
         zIndex: 1000,
+        pointerEvents: "auto",
         userSelect: "none",
         touchAction: "none",
       }}
-      onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)}
-      onPointerMove={(e) => {
-        if (e.buttons !== 1) return;
-        const rect = e.currentTarget.getBoundingClientRect();
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
-        const dx = e.clientX - cx;
-        const dy = e.clientY - cy;
-        const len = Math.hypot(dx, dy) || 1;
-        const nx = Math.max(-1, Math.min(1, dx / radius));
-        const ny = Math.max(-1, Math.min(1, dy / radius));
-        setSteer(nx, ny);
-      }}
-      onPointerUp={() => setSteer(0, 0)}
+      ref={baseRef}
     >
+      {/* base ring */}
       <div
         style={{
           position: "absolute",
-          left: 0,
-          top: 0,
-          right: 0,
-          bottom: 0,
-          borderRadius: 9999,
-          background: "rgba(255,255,255,0.05)",
+          left: "50%",
+          top: "50%",
+          width: stickRadius * 2,
+          height: stickRadius * 2,
+          transform: "translate(-50%, -50%)",
+          borderRadius: "9999px",
+          background:
+            "radial-gradient(circle at 50% 50%, rgba(255,255,255,0.10), rgba(255,255,255,0.03))",
           border: "2px solid rgba(255,255,255,0.08)",
+          boxShadow: "inset 0 0 12px rgba(0,0,0,0.35)",
+        }}
+      />
+      {/* knob */}
+      <div
+        ref={knobRef}
+        style={{
+          position: "absolute",
+          left: "50%",
+          top: "50%",
+          width: 64,
+          height: 64,
+          transform: "translate(-50%, -50%)",
+          borderRadius: "9999px",
+          background:
+            "radial-gradient(circle at 45% 35%, rgba(255,255,255,0.85), rgba(200,200,255,0.25))",
+          border: "2px solid rgba(255,255,255,0.4)",
+          boxShadow: "0 6px 16px rgba(0,0,0,0.35), inset 0 0 12px rgba(0,0,0,0.25)",
         }}
       />
     </div>
   );
 }
 
+/* ---------- Hop button ---------- */
 function HopButton() {
   const mode = useControls((s) => s.mode);
-  const toggle = useControls((s) => s.toggleMode);
+  const setMode = useControls((s) => s.setMode);
+  const setSteer = useControls((s) => s.setSteer);
+
+  const onClick = () => {
+    // reset input and swap mode
+    setSteer(0, 0);
+    setMode(mode === "car" ? "foot" : "car");
+  };
 
   return (
     <button
-      onClick={toggle}
+      onClick={onClick}
       style={{
         position: "fixed",
-        right: 18,              // opposite the wheel
-        bottom: 88,             // above Enter button
+        right: 18,
+        bottom: 88,  // above the Enter button
         zIndex: 1100,
         padding: "12px 18px",
         borderRadius: 12,
@@ -125,24 +235,23 @@ export default function App() {
           />
           <Environment preset="city" />
 
-          {/* Scene content */}
+          {/* Scene */}
           <Scenery
             islandRadius={14}
             roadBand={1.2}
             buildingZones={[
-              { x: 0,  z: -4, r: 1.6 }, // Resume
-              { x: 4,  z: 0,  r: 1.8 }, // GitHub
-              { x: -4, z: 0,  r: 1.6 }, // LinkedIn
-              { x: 0,  z: 4,  r: 1.9 }, // Projects
+              { x: 0,  z: -4, r: 1.6 },
+              { x: 4,  z: 0,  r: 1.8 },
+              { x: -4, z: 0,  r: 1.6 },
+              { x: 0,  z: 4,  r: 1.9 },
             ]}
             seed={1337}
             counts={{ poles: 14, signs: 12, grass: 150, bushes: 70 }}
           />
           <World />
 
-          {/* Only ONE of these is ever mounted */}
-          {mode === "car"  && <Player active />}
-          {mode === "foot" && <FootController active />}
+          {/* Mount exactly one controller */}
+          {mode === "car"  ? <Player key="car" active /> : <FootController key="foot" active />}
 
           <ClockTower position={[-8, 0, -8]} height={4.2} faceSize={1.2} />
           <ClockTower position={[8, 0, -8]} height={4.2} faceSize={1.2} />
@@ -190,13 +299,13 @@ export default function App() {
         </Canvas>
       </KeyboardControls>
 
-      {/* HUD header */}
+      {/* HUD */}
       <div className="hud">
         <div className="hud-top">
           <div>
             <div className="brand">Hunter Carbone · Cloud/DevOps 3D Portfolio</div>
             <div className="hint">
-              Push the wheel to drive (up = forward). Press <b>E</b> near a building with a neon sign
+              Push the wheel to drive (up = forward). Press <b>E</b> near a neon building
             </div>
           </div>
           <div className="actions">
