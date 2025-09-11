@@ -3,9 +3,8 @@ frontend:
   phases:
     preBuild:
       commands:
-        # Use Node 20 if nvm is available (new Amplify images have it)
-        - if command -v nvm >/dev/null 2>&1; then nvm install 20 && nvm use 20; fi
-        # Install deps (ci will fail if no package-lock.json; this falls back)
+        - node -v
+        # Use lockfile if present; fall back to npm i so builds never fail
         - npm ci || npm i
     build:
       commands:

@@ -1,6 +1,5 @@
 // src/store/useControls.js
 import { create } from "zustand";
-
 const useControls = create((set, get) => ({
   mode: "car",
   toggleMode: () => set((s) => ({ mode: s.mode === "car" ? "foot" : "car" })),
@@ -9,7 +8,6 @@ const useControls = create((set, get) => ({
   canEnter: false,
   setCanEnter: (v) => set({ canEnter: v }),
   nearestStation: null,
-  setNearestStation: (station) => set({ nearestStation: station }),
+  setNearestStation: (station) => set({ nearestStation: station })
 }));
-
 export default useControls;
