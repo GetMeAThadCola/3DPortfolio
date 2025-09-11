@@ -1,37 +1,23 @@
 // src/components/Player.jsx
-import React, { useRef, Suspense, useEffect } from "react";
+import React, { useRef, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { PositionalAudio } from "@react-three/drei";
-import Car from "./Car.jsx";
 import usePlayer from "../store/usePlayer.js";
 import useControls from "../store/useControls.js";
 
-// Your car model faces +Z
+// Tuning
 const MODEL_FORWARD_IS_NEG_Z = false;
-
-/** Tuning **/
-const MAX_SPEED = 6.2;      // forward m/s
-const MAX_REVERSE = 1.9;    // reverse m/s
-const ACCEL = 8.2;          // throttle accel
-const BRAKE = 7.2;          // reverse/brake accel
-const DRAG = 1.6;           // linear drag (slightly lower = more glide)
-
-const TURN_BASE = 1.5;      // rad/s at standstill
-const TURN_RATE = 2.6;      // extra rad/s at full speed
-
-// Smooth joystick → car
+const MAX_SPEED = 6.2;
+const MAX_REVERSE = 1.9;
+const ACCEL = 8.2;
+const BRAKE = 7.2;
+const DRAG = 1.6;
+const TURN_BASE = 1.5;
+const TURN_RATE = 2.6;
 const LAMBDA_STEER = 12;
-const LAMBDA_THR   = 10;
-
-// Camera (chase)
-const CHASE_BACK_DEFAULT = 5.5;   // default chase distance
+const LAMBDA_THR = 10;
+const CHASE_BACK = 5.5;
 const CHASE_HEIGHT = 3.8;
-
-// Spawn zoom
-const SPAWN_BACK = 20;      // start zoomed out
-const SPAWN_TIME = 1.6;     // seconds to zoom to normal
-
-// Audio
 const SKID_URL = "/audio/skid.mp3";
 const SKID_VOL = 0.25;
 
@@ -45,68 +31,60 @@ function curve(v) {
   return s * a * a * a;
 }
 
-export default function Player() {
+/**
+ * Player car stays mounted at all times. We pass `active`
+ * to turn physics/camera updates on/off to avoid setState-after-unmount.
+ */
+export default function Player({ active = true }) {
   const ref = useRef();
   const skidRef = useRef();
   const { camera } = useThree();
 
-  // car state
   const heading = useRef(0);
   const speed = useRef(0);
   const steerFilt = useRef(0);
   const thrFilt = useRef(0);
-
-  // camera state
-  const chaseDist = useRef(SPAWN_BACK);
-  const targetDist = useRef(CHASE_BACK_DEFAULT);
-  const spawnTimer = useRef(SPAWN_TIME);
+  const alive = useRef(true);
 
   const setPos = usePlayer((s) => s.setPos);
-  const steer = useControls((s) => s.steer); // {x,y} ∈ [-1..1]
+  const steer = useControls((s) => s.steer);
+  const mode = useControls((s) => s.mode); // "car" | "foot"
 
-  // --- Spawn: face -Z and set initial camera far away
+  useEffect(() => () => { alive.current = false; }, []);
+
+  // Spawn facing -Z and position camera once
   useEffect(() => {
     if (!ref.current) return;
-    heading.current = Math.PI; // 180° (face -Z)
+    heading.current = Math.PI; // 180°
     const y = 0.02;
     ref.current.position.set(0, y, 2.5);
 
-    chaseDist.current = SPAWN_BACK;
-    targetDist.current = CHASE_BACK_DEFAULT;
-
     const p = ref.current.position;
-    const camX = p.x - Math.sin(heading.current) * chaseDist.current;
-    const camZ = p.z - Math.cos(heading.current) * chaseDist.current;
+    const camX = p.x - Math.sin(heading.current) * CHASE_BACK;
+    const camZ = p.z - Math.cos(heading.current) * CHASE_BACK;
     camera.position.set(camX, p.y + CHASE_HEIGHT, camZ);
     camera.lookAt(p.x, p.y + 0.55, p.z);
   }, [camera]);
 
-  // --- Wheel zoom (clamped)
-  useEffect(() => {
-    const onWheel = (e) => {
-      const d = Math.sign(e.deltaY) * 0.8; // step
-      const next = Math.min(18, Math.max(3, targetDist.current + d));
-      targetDist.current = next;
-    };
-    window.addEventListener("wheel", onWheel, { passive: true });
-    return () => window.removeEventListener("wheel", onWheel);
-  }, []);
-
-  // --- Prepare skid audio (autoplay unlock)
+  // Prepare skid audio and unlock after first gesture
   useEffect(() => {
     const a = skidRef.current;
     if (!a) return;
+
     try {
       a.setLoop(true);
       a.setRefDistance(6);
       a.setVolume(0);
-    } catch { /* noop */ }
+    } catch {}
 
     const unlock = () => {
-      try { if (!a.isPlaying) a.play(); } catch { /* noop */ }
+      try {
+        if (!a.isPlaying) a.play();
+      } catch {}
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
     };
+
     window.addEventListener("pointerdown", unlock, { once: true });
     window.addEventListener("keydown", unlock, { once: true });
     return () => {
@@ -115,21 +93,23 @@ export default function Player() {
     };
   }, []);
 
-  useFrame((state, dt) => {
-    if (!ref.current) return;
+  useFrame((_state, dt) => {
+    // If not alive or not the active controller, do nothing
+    if (!alive.current || !ref.current) return;
+    if (!active || mode !== "car") return;
 
-    // ----- INPUTS -----
+    // INPUTS
     const targetSteer = curve(-steer.x);
     const targetThr   = curve(-steer.y);
     steerFilt.current = expSmooth(steerFilt.current, targetSteer, LAMBDA_STEER, dt);
     thrFilt.current   = expSmooth(thrFilt.current,   targetThr,   LAMBDA_THR,   dt);
 
-    // ----- PHYSICS -----
-    const throttle = thrFilt.current; // -1..1
+    // PHYS
+    const throttle = thrFilt.current;
     const accel = throttle >= 0 ? throttle * ACCEL : throttle * BRAKE;
     speed.current += accel * dt;
 
-    // linear drag toward 0
+    // drag towards 0
     const drag = DRAG * dt;
     if (speed.current > 0) speed.current = Math.max(0, speed.current - drag);
     else if (speed.current < 0) speed.current = Math.min(0, speed.current + drag);
@@ -150,38 +130,28 @@ export default function Player() {
     ref.current.position.z += dirZ * speed.current * dt;
     ref.current.position.y = 0.02;
 
-    // boundary clamp to island radius
+    // clamp to island radius
     const r = Math.hypot(ref.current.position.x, ref.current.position.z);
-    const maxR = 13.0; // slightly inside the wall
+    const maxR = 13.0;
     if (r > maxR) {
       const t = maxR / r;
       ref.current.position.x *= t;
       ref.current.position.z *= t;
-      // simple bounce: damp speed
-      speed.current *= -0.35;
+      speed.current *= -0.4; // soft bounce
     }
 
     // face heading
     const yaw = MODEL_FORWARD_IS_NEG_Z ? heading.current + Math.PI : heading.current;
     ref.current.rotation.y = yaw;
 
-    // ----- CHASE CAMERA -----
-    // spawn zoom-in
-    if (spawnTimer.current > 0) {
-      spawnTimer.current = Math.max(0, spawnTimer.current - dt);
-      const k = 1 - spawnTimer.current / SPAWN_TIME;
-      targetDist.current = CHASE_BACK_DEFAULT + (SPAWN_BACK - CHASE_BACK_DEFAULT) * (1 - k);
-    }
-    // smooth chase distance
-    chaseDist.current = expSmooth(chaseDist.current, targetDist.current, 6, dt);
-
+    // chase camera when active
     const p = ref.current.position;
-    const camX = p.x - Math.sin(heading.current) * chaseDist.current;
-    const camZ = p.z - Math.cos(heading.current) * chaseDist.current;
+    const camX = p.x - Math.sin(heading.current) * CHASE_BACK;
+    const camZ = p.z - Math.cos(heading.current) * CHASE_BACK;
     camera.position.lerp({ x: camX, y: p.y + CHASE_HEIGHT, z: camZ }, 0.12);
     camera.lookAt(p.x, p.y + 0.55, p.z);
 
-    // ----- SKID SOUND -----
+    // skid sound
     const a = skidRef.current;
     if (a) {
       const turnForce = Math.abs(steerAmount);
@@ -189,27 +159,21 @@ export default function Player() {
       try {
         a.setVolume(skidLevel * SKID_VOL);
         if (!a.isPlaying && skidLevel > 0.02) a.play();
-      } catch { /* noop */ }
+      } catch {}
     }
 
-    setPos(p.x, p.y, p.z);
+    // publish position (only while active)
+    if (alive.current) setPos(p.x, p.y, p.z);
   });
 
   return (
-    <group ref={ref} position={[0, 0.02, 0]}>
-      <Suspense
-        fallback={
-          <mesh castShadow>
-            <boxGeometry args={[0.5, 0.22, 0.8]} />
-            <meshStandardMaterial color="#6aa7ff" />
-          </mesh>
-        }
-      >
-        <group position={[0, 0, 0]}>
-          <Car fit={0.45} rotateY={0} />
-          <PositionalAudio ref={skidRef} url={SKID_URL} distance={8} />
-        </group>
-      </Suspense>
+    <group ref={ref} position={[0, 0.02, 0]} visible={true}>
+      {/* Simple proxy car (replace with your model if needed) */}
+      <mesh castShadow>
+        <boxGeometry args={[0.8, 0.22, 1.2]} />
+        <meshStandardMaterial color={active ? "#6aa7ff" : "#334155"} />
+      </mesh>
+      <PositionalAudio ref={skidRef} url={SKID_URL} distance={8} />
     </group>
   );
 }
