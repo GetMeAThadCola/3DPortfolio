@@ -117,3 +117,25 @@ body { background: var(--bg); color: var(--fg); font-family: ui-sans-serif, syst
   border-bottom: 14px solid #fff;
   transform-origin: 50% 75%;
 }
+/* Mobile 'Enter' button */
+.enter-btn{
+  position: fixed;
+  right: 18px;
+  bottom: 18px;         /* near bottom like you asked */
+  z-index: 1000;        /* above the canvas */
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 14px;
+  font-weight: 700;
+  background: rgba(0,0,0,.75);
+  color: #fff;
+  letter-spacing: .4px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 6px 18px rgba(0,0,0,.25);
+  cursor: pointer;
+}
+
+/* Optional: hide on larger screens (desktop) */
+@media (min-width: 900px){
+  .enter-btn{ display: none; }
+}
