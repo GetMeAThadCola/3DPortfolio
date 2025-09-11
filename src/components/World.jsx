@@ -12,15 +12,33 @@ const GHOST_RISE = 0.9;   // m/s upward
 const GHOST_FADE = 0.35;  // opacity per second
 const GHOST_SPIN = 0.6;   // rad/s spin while rising
 
-const ENTER_RADIUS = 1.1; // when within this radius of a door, enable Enter
-
 // Audio (place your file in public/audio/)
 const SCREAM_URL = "/audio/ped_scream.mp3";
 const SCREAM_VOL = 0.7;       // 0..1
 const SCREAM_MIN_RATE = 0.95; // randomize pitch slightly
 const SCREAM_MAX_RATE = 1.10;
 
-/** small props */
+/** Match the links you use in App.jsx **/
+const LINKS = {
+  resumeUrl: "/resume.pdf",
+  githubUrl: "https://github.com/GetMeAThadCola",
+  linkedinUrl: "https://www.linkedin.com/in/huntertcarbone",
+  projectsUrl: "https://github.com/GetMeAThadCola?tab=repositories",
+  moreinfoUrl: "https://hunter-resume.vercel.app",
+};
+
+/** Stations: same centers as your <BuildingStation/>s
+ *  r = larger usable area (tweak per station if you want)
+ */
+const STATIONS = [
+  { label: "Resume",    x:  0,  z: -4, r: 3.0, url: LINKS.resumeUrl },
+  { label: "GitHub",    x: 10,  z:  0, r: 2.8, url: LINKS.githubUrl },
+  { label: "LinkedIn",  x:-10,  z:  0, r: 2.8, url: LINKS.linkedinUrl },
+  { label: "Projects",  x:  0,  z: 10, r: 3.2, url: LINKS.projectsUrl },
+  { label: "More Info", x:  3,  z: -5, r: 2.8, url: LINKS.moreinfoUrl },
+];
+
+/** small props **/
 function Tree({ pos = [0, 0, 0], scale = 1 }) {
   return (
     <group position={pos} scale={scale}>
@@ -264,7 +282,7 @@ function Pedestrian({ start = [0, 0, 0], color = "#ff9f1c", doors = [], clampR =
       <group ref={normalG}>
         <mesh castShadow>
           <cylinderGeometry args={[0.08, 0.09, 0.35, 12]} />
-          <meshStandardMaterial color={color} />
+        <meshStandardMaterial color={color} />
         </mesh>
         <mesh position={[0, 0.25, 0]} castShadow>
           <sphereGeometry args={[0.09, 16, 16]} />
@@ -299,10 +317,10 @@ export default function World() {
   const ground = useRef();
   const R = 14; // island radius
 
-  // For Enter button glow: proximity to door
   const playerPos = usePlayer((s) => s.pos);
-  const setCanEnter = useControls((s) => s.setCanEnter);
-  const lastCanRef = useRef(false);
+  const setNearestStation = useControls((s) => s.setNearestStation);
+  const setCanEnter = useControls((s) => s.setCanEnter); // optional in store
+  const lastLabelRef = useRef(null);
 
   useFrame(() => {
     if (ground.current) ground.current.rotation.z += 0.00012;
@@ -316,7 +334,7 @@ export default function World() {
   };
 
   /** occupancy helpers */
-  const OCC = new Set();
+  const OCC = useRef(new Set()).current;
   const key = (x, z) => `${Math.round(x * 10)},${Math.round(z * 10)}`;
   const markOcc = (x, z, r = 0.9) => {
     const step = 0.6;
@@ -331,7 +349,9 @@ export default function World() {
   /** pre-mark: roads, lamps, stop signs, stations */
   const lamps = useMemo(() => [[-3, -0.9],[0, -0.9],[3, -0.9],[-3, 0.9],[0, 0.9],[3, 0.9]], []);
   const stopSigns = useMemo(() => [[1.6, -1.6],[-1.6, 1.6],[1.6, 1.6],[-1.6, -1.6]], []);
-  const stations = useMemo(() => [[0, -4],[4, 0],[-4, 0],[0, 4]], []);
+  // derive station points from STATIONS so everything stays in sync
+  const stationPoints = useMemo(() => STATIONS.map(s => [s.x, s.z]), []);
+
   useMemo(() => {
     for (let gx = -R; gx <= R; gx += 0.4) {
       for (let gz = -R; gz <= R; gz += 0.4) {
@@ -341,8 +361,8 @@ export default function World() {
     }
     lamps.forEach(([x,z]) => markOcc(x, z, 0.9));
     stopSigns.forEach(([x,z]) => markOcc(x, z, 0.9));
-    stations.forEach(([x,z]) => markOcc(x, z, 1.6));
-  }, [lamps, stopSigns, stations]);
+    stationPoints.forEach(([x,z]) => markOcc(x, z, 1.6));
+  }, [lamps, stopSigns, stationPoints]);
 
   /** vibrant palette */
   const palette = ["#1d4ed8","#0ea5e9","#10b981","#16a34a","#f59e0b","#ef4444","#a855f7","#fb7185","#22d3ee","#f97316","#84cc16","#06b6d4","#eab308","#f43f5e","#60a5fa"];
@@ -407,22 +427,29 @@ export default function World() {
     });
   }, [cityBlocks]);
 
-  // ---- Proximity check for Enter button glow ----
+  // ---- Proximity check for Enter button (LARGER station areas) ----
   useFrame(() => {
-    if (!playerPos || doorPositions.length === 0) return;
+    if (!playerPos) return;
     const [px, , pz] = playerPos;
-    let can = false;
-    for (let i = 0; i < doorPositions.length; i++) {
-      const dx = doorPositions[i][0] - px;
-      const dz = doorPositions[i][1] - pz;
-      if (dx * dx + dz * dz <= ENTER_RADIUS * ENTER_RADIUS) {
-        can = true;
-        break;
+
+    let nearest = null;
+    let minD2 = Infinity;
+
+    for (const s of STATIONS) {
+      const dx = s.x - px;
+      const dz = s.z - pz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 <= s.r * s.r && d2 < minD2) {
+        minD2 = d2;
+        nearest = { ...s, dist: Math.sqrt(d2) };
       }
     }
-    if (can !== lastCanRef.current) {
-      lastCanRef.current = can;
-      setCanEnter(can);
+
+    const label = nearest ? nearest.label : null;
+    if (label !== lastLabelRef.current) {
+      lastLabelRef.current = label;
+      if (setNearestStation) setNearestStation(nearest);
+      if (setCanEnter) setCanEnter(!!nearest); // keep EnterButton glow in sync if your store has it
     }
   });
 

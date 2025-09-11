@@ -4,59 +4,54 @@ import useControls from "../store/useControls.js";
 
 /**
  * Fixed overlay "Enter" button.
- * - Glows/pulses when `canEnter` is true (near a door).
- * - Fires the same logic as pressing the "E" key.
- * - Pinned bottom-right. Change `corner` to "left" if your wheel is on the right.
+ * - Pulses red when canEnter is true (near a station).
+ * - Calls enterNearest() from the store (mobile-safe direct nav).
+ * - Pinned bottom-right by default. Use corner="left" to flip.
  */
 export default function EnterButton({ corner = "right", label = "Enter" }) {
   const canEnter = useControls((s) => s.canEnter);
+  const enterNearest = useControls((s) => s.enterNearest);
   const isRight = corner === "right";
 
-  const base = {
+  const style = {
     position: "fixed",
-    bottom: "calc(18px + env(safe-area-inset-bottom))",
+    bottom: "calc(20px + env(safe-area-inset-bottom))",
     [isRight ? "right" : "left"]:
-      `calc(18px + env(safe-area-inset-${isRight ? "right" : "left"}))`,
+      `calc(20px + env(safe-area-inset-${isRight ? "right" : "left"}))`,
     zIndex: 2147483647,
-    padding: "14px 18px",
-    borderRadius: 16,
+    padding: "16px 20px",         // bigger
+    borderRadius: 18,
     border: "none",
     fontSize: "16px",
     fontWeight: 800,
     letterSpacing: "0.4px",
     color: "#fff",
     background: canEnter
-      ? "linear-gradient(180deg, rgba(0,229,255,.95), rgba(0,190,240,.95))"
+      ? "linear-gradient(180deg, #ff3b3b, #d92626)" // red when active
       : "rgba(0,0,0,.78)",
     cursor: canEnter ? "pointer" : "default",
     userSelect: "none",
     WebkitUserSelect: "none",
     touchAction: "manipulation",
     pointerEvents: "auto",
-    transition: "transform .12s ease, box-shadow .2s ease, background .2s ease",
-    // subtle scale so it's a bit bigger than before
-    transform: "translateZ(0) scale(1.06)",
-    // default shadow
+    transform: "translateZ(0) scale(1.12)", // a bit larger
     boxShadow: canEnter
-      ? "0 0 14px rgba(0,229,255,.65), 0 0 28px rgba(0,229,255,.35)"
-      : "0 6px 18px rgba(0,0,0,.25)",
+      ? "0 0 14px rgba(255,60,60,.7), 0 0 30px rgba(255,60,60,.4)"
+      : "0 8px 20px rgba(0,0,0,.28)",
+    transition: "box-shadow .18s ease, background .18s ease, transform .12s ease",
   };
 
-  const onTap = () => {
+  const onClick = () => {
     if (!canEnter) return;
-    // Trigger same behavior as pressing "E"
-    const ev = new KeyboardEvent("keydown", { key: "e", code: "KeyE" });
-    document.dispatchEvent(ev);
-    window.dispatchEvent(ev);
-    // (Optional) small haptic tap on mobile
+    enterNearest();
     if (navigator.vibrate) navigator.vibrate(10);
   };
 
   return (
     <button
-      className={`enter-btn ${canEnter ? "glow" : ""}`}
-      style={base}
-      onClick={onTap}
+      style={style}
+      className={canEnter ? "enter-btn glow-red" : "enter-btn"}
+      onClick={onClick}
       aria-label="Enter building"
       aria-disabled={!canEnter}
     >
