@@ -14,7 +14,6 @@ import useControls from "./store/useControls.js";
 import usePlayer from "./store/usePlayer.js";
 import "./styles.css";
 
-/* ------------------ LINKS ------------------ */
 const LINKS = {
   resumeUrl: "/resume.pdf",
   githubUrl: "https://github.com/GetMeAThadCola",
@@ -32,10 +31,9 @@ function SteeringUI() {
   const dragging = useRef(false);
   const center = useRef({ x: 0, y: 0 });
 
-  const maxRadius = 70;  // px joystick radius
+  const maxRadius = 70;
   const hitboxSize = 240;
 
-  // update center on resize
   useEffect(() => {
     const updateCenter = () => {
       const base = baseRef.current;
@@ -131,9 +129,9 @@ function SteeringUI() {
 function OnFoot() {
   const ref = useRef();
   const heading = useRef(0);
+  const poseRef = useRef({ x: 0, y: 0, z: 0, heading: 0 });
 
   const steer = useControls((s) => s.steer);
-  const setFootPose = useControls((s) => s.setFootPose);
   const setPos = usePlayer((s) => s.setPos);
   const { camera } = useThree();
 
@@ -142,6 +140,12 @@ function OnFoot() {
   const RADIUS_MAX = 13.5;
   const CAM_BACK   = 3.6;
   const CAM_UP     = 2.2;
+
+  useEffect(() => {
+    // Expose a safe getter for the shoot button
+    window.__getFootPose = () => poseRef.current;
+    return () => { delete window.__getFootPose; };
+  }, []);
 
   useFrame((_, dt) => {
     if (!ref.current) return;
@@ -171,9 +175,9 @@ function OnFoot() {
     camera.position.lerp({ x: camX, y: p.y + CAM_UP, z: camZ }, 0.14);
     camera.lookAt(p.x, p.y + 0.9, p.z);
 
-    // share foot pose (for shooting) + player pos for prompts
-    setFootPose({ x: p.x, y: p.y, z: p.z, heading: heading.current });
+    // Update shared pose for building-enter prompts & the global getter
     setPos(p.x, p.y, p.z);
+    poseRef.current = { x: p.x, y: p.y, z: p.z, heading: heading.current };
   });
 
   return (
@@ -190,7 +194,7 @@ function OnFoot() {
   );
 }
 
-/* ------------------ Hop & Shoot Buttons (overlay DOM) ------------------ */
+/* ------------------ Hop & Shoot Buttons (DOM overlays) ------------------ */
 function HopButton({ corner = "left" }) {
   const mode = useControls((s) => s.mode);
   const toggleMode = useControls((s) => s.toggleMode);
@@ -210,6 +214,7 @@ function HopButton({ corner = "left" }) {
     background: "rgba(0,0,0,.78)",
     boxShadow: "0 6px 18px rgba(0,0,0,.25)",
     pointerEvents: "auto",
+    touchAction: "manipulation",
   };
   return (
     <button style={style} onClick={toggleMode}>
@@ -220,8 +225,6 @@ function HopButton({ corner = "left" }) {
 
 function ShootButton({ corner = "right" }) {
   const mode = useControls((s) => s.mode);
-  const footPose = useControls((s) => s.footPose);
-  const spawnBullet = useControls((s) => s.spawnBullet);
   if (mode !== "foot") return null;
 
   const isRight = corner === "right";
@@ -240,13 +243,21 @@ function ShootButton({ corner = "right" }) {
     background: "linear-gradient(180deg, #ff3b3b, #d92626)",
     boxShadow: "0 0 14px rgba(255,60,60,.7), 0 0 30px rgba(255,60,60,.4)",
     pointerEvents: "auto",
+    touchAction: "manipulation",
   };
   const onShoot = () => {
-    const { x, y, z, heading } = footPose;
-    const dir = [Math.sin(heading || 0), 0, Math.cos(heading || 0)];
-    const pos = [ (x||0) + dir[0]*0.35, (y||0.02) + 0.25, (z||0) + dir[2]*0.35 ];
-    spawnBullet({ pos, dir, speed: 18 });
-    if (navigator.vibrate) navigator.vibrate(10);
+    try {
+      const getPose = window.__getFootPose;
+      const spawn = window.__spawnBullet;
+      if (!getPose || !spawn) return;
+
+      const pose = getPose();
+      const heading = pose.heading || 0;
+      const dir = [Math.sin(heading), 0, Math.cos(heading)];
+      const pos = [pose.x + dir[0] * 0.35, (pose.y || 0.02) + 0.25, pose.z + dir[2] * 0.35];
+      spawn({ pos, dir, speed: 18 });
+      if (navigator.vibrate) navigator.vibrate(10);
+    } catch {}
   };
   return <button style={style} onClick={onShoot}>Shoot</button>;
 }
@@ -294,14 +305,11 @@ export default function App() {
 
           <World />
 
-          {/* Drive or Walk */}
           {mode === "car" ? <Player /> : <OnFoot />}
 
-          {/* Landmarks */}
           <ClockTower position={[-8, 0, -8]} height={4.2} faceSize={1.2} />
           <ClockTower position={[8, 0, -8]} height={4.2} faceSize={1.2} />
 
-          {/* Stations */}
           <BuildingStation
             position={[0, 0, -4]}
             size={[2.0, 1.4, 1.4]}
@@ -352,9 +360,6 @@ export default function App() {
         <div className="hud-top">
           <div>
             <div className="brand">Hunter Carbone · Cloud/DevOps 3D Portfolio</div>
-            <div className="hint">
-              Push the wheel to drive (up = forward). Press <b>E</b> near a building with a neon sign
-            </div>
           </div>
           <div className="actions">
             <a className="button" href={LINKS.resumeUrl} download>Download Resume</a>
@@ -367,8 +372,6 @@ export default function App() {
       {/* Overlays */}
       <SteeringUI />
       <EnterButton corner="right" label="Enter" />
-
-      {/* Hop & Shoot (DOM) */}
       <HopButton corner="left" />
       <ShootButton corner="right" />
 

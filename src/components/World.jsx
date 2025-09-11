@@ -24,7 +24,7 @@ const SCREAM_VOL = 0.7;
 const SCREAM_MIN_RATE = 0.95;
 const SCREAM_MAX_RATE = 1.10;
 
-/** Match App.jsx */
+/** Stations (must match App.jsx) */
 const LINKS = {
   resumeUrl: "/resume.pdf",
   githubUrl: "https://github.com/GetMeAThadCola",
@@ -32,8 +32,6 @@ const LINKS = {
   projectsUrl: "https://github.com/GetMeAThadCola?tab=repositories",
   moreinfoUrl: "https://hunter-resume.vercel.app",
 };
-
-/** Stations (larger usable radii) */
 const STATIONS = [
   { label: "Resume",    x:  0,  z: -4, r: 3.0, url: LINKS.resumeUrl },
   { label: "GitHub",    x: 10,  z:  0, r: 2.8, url: LINKS.githubUrl },
@@ -146,11 +144,12 @@ const Pedestrian = forwardRef(function Pedestrian(
   const ghostAlpha = useRef(0);
   const screamed = useRef(false);
   const playerPos = usePlayer((s) => s.pos);
+  const mode = useControls((s) => s.mode); // "car" | "foot"
 
   useImperativeHandle(apiRef, () => ({
     becomeGhost: () => {
       if (isGhost.current) return;
-      // scream once on hit
+      // scream once on hit (bullet or car)
       if (!screamed.current && screamRef.current) {
         try {
           const a = screamRef.current;
@@ -231,19 +230,19 @@ const Pedestrian = forwardRef(function Pedestrian(
       ref.current.rotation.y = Math.atan2(vx, vz);
     }
 
-    // clamp
+    // clamp inside wall
     const pr = Math.hypot(p.x, p.z);
     if (pr > clampR) {
       const t = clampR / pr;
       p.x *= t; p.z *= t;
     }
 
-    // car collision -> ghost
-    if (playerPos) {
+    // ONLY car → ped contact turns into ghost (mode === "car")
+    if (mode === "car" && playerPos) {
       const [px, , pz] = playerPos;
       const d = Math.hypot(px - p.x, pz - p.z);
       if (d < HIT_DIST) {
-        apiRef?.current?.becomeGhost?.();
+        try { apiRef?.current?.becomeGhost?.(); } catch {}
       }
     }
   });
@@ -254,7 +253,7 @@ const Pedestrian = forwardRef(function Pedestrian(
       <group ref={normalG}>
         <mesh castShadow>
           <cylinderGeometry args={[0.08, 0.09, 0.35, 12]} />
-          <meshStandardMaterial color="#ff9f1c" />
+          <meshStandardMaterial color={color} />
         </mesh>
         <mesh position={[0, 0.25, 0]} castShadow>
           <sphereGeometry args={[0.09, 16, 16]} />
@@ -289,8 +288,18 @@ export default function World() {
   const setNearestStation = useControls((s) => s.setNearestStation);
   const setCanEnter = useControls((s) => s.setCanEnter);
 
-  const bullets = useRef([]); // { pos, dir, speed, life, mesh }
-  const lastNearestLabel = useRef(null);
+  // bullets live here
+  const bullets = useRef([]);        // active bullets { pos, dir, speed, life, mesh }
+  const bulletQueue = useRef([]);    // spawn queue
+
+  // expose a safe spawn API for the Shoot button
+  useEffect(() => {
+    window.__spawnBullet = (b) => {
+      if (!b) return;
+      bulletQueue.current.push(b);
+    };
+    return () => { delete window.__spawnBullet; };
+  }, []);
 
   useFrame(() => {
     if (ground.current) ground.current.rotation.z += 0.00012;
@@ -316,7 +325,7 @@ export default function World() {
   };
   const isOcc = (x, z) => OCC.has(key(x, z));
 
-  /** pre-mark: roads + station pads */
+  // pre-mark: roads + station pads
   const stationPoints = useMemo(() => STATIONS.map(s => [s.x, s.z]), []);
   useMemo(() => {
     for (let gx = -R; gx <= R; gx += 0.4) {
@@ -387,7 +396,6 @@ export default function World() {
     });
   }, [cityBlocks]);
 
-  // refs to each pedestrian for bullet collisions
   const pedRefs = useMemo(
     () => pedestrians.map(() => React.createRef()),
     [pedestrians.length]
@@ -409,22 +417,15 @@ export default function World() {
       }
     }
 
-    const label = nearest ? nearest.label : null;
-    if (label !== (World._lastNearestLabel || null)) {
-      World._lastNearestLabel = label;
-      setNearestStation?.(nearest);
-      setCanEnter?.(!!nearest);
-    }
+    setNearestStation?.(nearest || null);
+    setCanEnter?.(!!nearest);
   });
 
   /** -------- Bullet handling (spawn + move + collide + cull) -------- */
   useFrame((_, dt) => {
-    const store = useControls.getState();
     // drain queue
-    while (store.bulletQueue.length > 0) {
-      const b = store.bulletQueue[0];
-      store.shiftBullet();
-
+    while (bulletQueue.current.length > 0) {
+      const b = bulletQueue.current.shift();
       const pos = new THREE.Vector3().fromArray(b.pos || [0, 0.25, 0]);
       const dir = new THREE.Vector3().fromArray(b.dir || [0, 0, 1]).normalize();
       const speed = b.speed ?? 16;
@@ -461,7 +462,7 @@ export default function World() {
         continue;
       }
 
-      // collide with pedestrians
+      // collide with pedestrians -> ghost
       for (const pr of pedRefs) {
         const target = pr.current;
         if (!target || !target.getPosition || !target.becomeGhost) continue;
