@@ -5,7 +5,7 @@ import { PositionalAudio } from "@react-three/drei";
 import usePlayer from "../store/usePlayer.js";
 import useControls from "../store/useControls.js";
 
-// Tuning
+// --- Tuning ---
 const MODEL_FORWARD_IS_NEG_Z = false;
 const MAX_SPEED = 6.2;
 const MAX_REVERSE = 1.9;
@@ -21,6 +21,7 @@ const CHASE_HEIGHT = 3.8;
 const SKID_URL = "/audio/skid.mp3";
 const SKID_VOL = 0.25;
 
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function expSmooth(curr, target, lambda, dt) {
   const a = 1 - Math.exp(-lambda * dt);
   return curr + (target - curr) * a;
@@ -32,8 +33,8 @@ function curve(v) {
 }
 
 /**
- * Player car stays mounted at all times. We pass `active`
- * to turn physics/camera updates on/off to avoid setState-after-unmount.
+ * Car stays mounted always. `active` gates physics/camera updates to
+ * avoid state updates after unmount.
  */
 export default function Player({ active = true }) {
   const ref = useRef();
@@ -47,18 +48,47 @@ export default function Player({ active = true }) {
   const alive = useRef(true);
 
   const setPos = usePlayer((s) => s.setPos);
-  const steer = useControls((s) => s.steer);
-  const mode = useControls((s) => s.mode); // "car" | "foot"
+  const steer = useControls((s) => s.steer); // joystick [-1..1]
+  const mode = useControls((s) => s.mode);   // "car" | "foot"
+
+  // WASD / arrows -> keyboard vector
+  const keys = useRef({ w: false, a: false, s: false, d: false, up: false, down: false, left: false, right: false });
+  useEffect(() => {
+    const dn = (e) => {
+      if (e.code === "KeyW") keys.current.w = true;
+      if (e.code === "KeyS") keys.current.s = true;
+      if (e.code === "KeyA") keys.current.a = true;
+      if (e.code === "KeyD") keys.current.d = true;
+      if (e.code === "ArrowUp") keys.current.up = true;
+      if (e.code === "ArrowDown") keys.current.down = true;
+      if (e.code === "ArrowLeft") keys.current.left = true;
+      if (e.code === "ArrowRight") keys.current.right = true;
+    };
+    const up = (e) => {
+      if (e.code === "KeyW") keys.current.w = false;
+      if (e.code === "KeyS") keys.current.s = false;
+      if (e.code === "KeyA") keys.current.a = false;
+      if (e.code === "KeyD") keys.current.d = false;
+      if (e.code === "ArrowUp") keys.current.up = false;
+      if (e.code === "ArrowDown") keys.current.down = false;
+      if (e.code === "ArrowLeft") keys.current.left = false;
+      if (e.code === "ArrowRight") keys.current.right = false;
+    };
+    window.addEventListener("keydown", dn);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", dn);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
 
   useEffect(() => () => { alive.current = false; }, []);
 
-  // Spawn facing -Z and position camera once
+  // Spawn facing -Z & place camera
   useEffect(() => {
     if (!ref.current) return;
     heading.current = Math.PI; // 180°
-    const y = 0.02;
-    ref.current.position.set(0, y, 2.5);
-
+    ref.current.position.set(0, 0.02, 2.5);
     const p = ref.current.position;
     const camX = p.x - Math.sin(heading.current) * CHASE_BACK;
     const camZ = p.z - Math.cos(heading.current) * CHASE_BACK;
@@ -66,25 +96,20 @@ export default function Player({ active = true }) {
     camera.lookAt(p.x, p.y + 0.55, p.z);
   }, [camera]);
 
-  // Prepare skid audio and unlock after first gesture
+  // Skid audio prep
   useEffect(() => {
     const a = skidRef.current;
     if (!a) return;
-
     try {
       a.setLoop(true);
       a.setRefDistance(6);
       a.setVolume(0);
     } catch {}
-
     const unlock = () => {
-      try {
-        if (!a.isPlaying) a.play();
-      } catch {}
+      try { if (!a.isPlaying) a.play(); } catch {}
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
     };
-
     window.addEventListener("pointerdown", unlock, { once: true });
     window.addEventListener("keydown", unlock, { once: true });
     return () => {
@@ -94,22 +119,30 @@ export default function Player({ active = true }) {
   }, []);
 
   useFrame((_state, dt) => {
-    // If not alive or not the active controller, do nothing
     if (!alive.current || !ref.current) return;
     if (!active || mode !== "car") return;
 
-    // INPUTS
-    const targetSteer = curve(-steer.x);
-    const targetThr   = curve(-steer.y);
+    // --- Combine keyboard + joystick into a single control vector ---
+    // Keyboard to car vector: left/right -> steer.x, forward/back -> steer.y
+    const kx = (keys.current.d || keys.current.right ? 1 : 0) + (keys.current.a || keys.current.left ? -1 : 0);
+    const ky = (keys.current.s || keys.current.down ? 1 : 0) + (keys.current.w || keys.current.up ? -1 : 0);
+
+    // Combine with joystick input and clamp
+    const inputX = clamp(steer.x + kx, -1, 1);
+    const inputY = clamp(steer.y + ky, -1, 1);
+
+    const targetSteer = curve(-inputX); // left/right
+    const targetThr   = curve(-inputY); // forward/back
+
     steerFilt.current = expSmooth(steerFilt.current, targetSteer, LAMBDA_STEER, dt);
     thrFilt.current   = expSmooth(thrFilt.current,   targetThr,   LAMBDA_THR,   dt);
 
-    // PHYS
+    // --- Physics ---
     const throttle = thrFilt.current;
     const accel = throttle >= 0 ? throttle * ACCEL : throttle * BRAKE;
     speed.current += accel * dt;
 
-    // drag towards 0
+    // drag to zero
     const drag = DRAG * dt;
     if (speed.current > 0) speed.current = Math.max(0, speed.current - drag);
     else if (speed.current < 0) speed.current = Math.min(0, speed.current + drag);
@@ -123,35 +156,35 @@ export default function Player({ active = true }) {
     const steerAmount = steerFilt.current * steerAuthority;
     heading.current += steerAmount * dt;
 
-    // move along heading
+    // move
     const dirX = Math.sin(heading.current);
     const dirZ = Math.cos(heading.current);
     ref.current.position.x += dirX * speed.current * dt;
     ref.current.position.z += dirZ * speed.current * dt;
     ref.current.position.y = 0.02;
 
-    // clamp to island radius
+    // clamp island
     const r = Math.hypot(ref.current.position.x, ref.current.position.z);
     const maxR = 13.0;
     if (r > maxR) {
       const t = maxR / r;
       ref.current.position.x *= t;
       ref.current.position.z *= t;
-      speed.current *= -0.4; // soft bounce
+      speed.current *= -0.4;
     }
 
-    // face heading
+    // rotate mesh
     const yaw = MODEL_FORWARD_IS_NEG_Z ? heading.current + Math.PI : heading.current;
     ref.current.rotation.y = yaw;
 
-    // chase camera when active
+    // camera follow
     const p = ref.current.position;
     const camX = p.x - Math.sin(heading.current) * CHASE_BACK;
     const camZ = p.z - Math.cos(heading.current) * CHASE_BACK;
     camera.position.lerp({ x: camX, y: p.y + CHASE_HEIGHT, z: camZ }, 0.12);
     camera.lookAt(p.x, p.y + 0.55, p.z);
 
-    // skid sound
+    // skid audio
     const a = skidRef.current;
     if (a) {
       const turnForce = Math.abs(steerAmount);
@@ -162,13 +195,13 @@ export default function Player({ active = true }) {
       } catch {}
     }
 
-    // publish position (only while active)
+    // publish position
     if (alive.current) setPos(p.x, p.y, p.z);
   });
 
+  // Simple proxy car (replace with your Car model if you want)
   return (
-    <group ref={ref} position={[0, 0.02, 0]} visible={true}>
-      {/* Simple proxy car (replace with your model if needed) */}
+    <group ref={ref} position={[0, 0.02, 0]} visible>
       <mesh castShadow>
         <boxGeometry args={[0.8, 0.22, 1.2]} />
         <meshStandardMaterial color={active ? "#6aa7ff" : "#334155"} />

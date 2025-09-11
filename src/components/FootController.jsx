@@ -4,8 +4,8 @@ import { useThree, useFrame } from "@react-three/fiber";
 import usePlayer from "../store/usePlayer.js";
 import useControls from "../store/useControls.js";
 
-const SPEED = 2.5;           // m/s walking
-const CAM_HEIGHT = 1.5;      // camera eye height
+const SPEED = 2.5;
+const CAM_HEIGHT = 1.5;
 const CAM_BACK = 2.2;
 
 export default function FootController({ active = false }) {
@@ -13,39 +13,44 @@ export default function FootController({ active = false }) {
   const { camera } = useThree();
   const setPos = usePlayer((s) => s.setPos);
   const mode = useControls((s) => s.mode);
-  const steer = useControls((s) => s.steer); // mobile stick can still drive walking
+  const steer = useControls((s) => s.steer);
   const alive = useRef(true);
 
-  // start where the player currently is
-  const playerPos = usePlayer((s) => s.pos);
+  const startPos = usePlayer((s) => s.pos);
   useEffect(() => {
-    if (ref.current && playerPos) {
-      ref.current.position.set(playerPos[0], 0.02, playerPos[2]);
+    if (ref.current && startPos) {
+      ref.current.position.set(startPos[0], 0.02, startPos[2]);
     }
-  }, []); // only first mount
-
+  }, []); // initial spawn
   useEffect(() => () => { alive.current = false; }, []);
 
-  // simple keyboard support too
-  const keys = useRef({ w: false, a: false, s: false, d: false });
+  const keys = useRef({ w: false, a: false, s: false, d: false, up: false, down: false, left: false, right: false });
   useEffect(() => {
-    const onDown = (e) => {
-      if (e.code === "KeyW" || e.code === "ArrowUp") keys.current.w = true;
-      if (e.code === "KeyS" || e.code === "ArrowDown") keys.current.s = true;
-      if (e.code === "KeyA" || e.code === "ArrowLeft") keys.current.a = true;
-      if (e.code === "KeyD" || e.code === "ArrowRight") keys.current.d = true;
+    const dn = (e) => {
+      if (e.code === "KeyW") keys.current.w = true;
+      if (e.code === "KeyS") keys.current.s = true;
+      if (e.code === "KeyA") keys.current.a = true;
+      if (e.code === "KeyD") keys.current.d = true;
+      if (e.code === "ArrowUp") keys.current.up = true;
+      if (e.code === "ArrowDown") keys.current.down = true;
+      if (e.code === "ArrowLeft") keys.current.left = true;
+      if (e.code === "ArrowRight") keys.current.right = true;
     };
-    const onUp = (e) => {
-      if (e.code === "KeyW" || e.code === "ArrowUp") keys.current.w = false;
-      if (e.code === "KeyS" || e.code === "ArrowDown") keys.current.s = false;
-      if (e.code === "KeyA" || e.code === "ArrowLeft") keys.current.a = false;
-      if (e.code === "KeyD" || e.code === "ArrowRight") keys.current.d = false;
+    const up = (e) => {
+      if (e.code === "KeyW") keys.current.w = false;
+      if (e.code === "KeyS") keys.current.s = false;
+      if (e.code === "KeyA") keys.current.a = false;
+      if (e.code === "KeyD") keys.current.d = false;
+      if (e.code === "ArrowUp") keys.current.up = false;
+      if (e.code === "ArrowDown") keys.current.down = false;
+      if (e.code === "ArrowLeft") keys.current.left = false;
+      if (e.code === "ArrowRight") keys.current.right = false;
     };
-    window.addEventListener("keydown", onDown);
-    window.addEventListener("keyup", onUp);
+    window.addEventListener("keydown", dn);
+    window.addEventListener("keyup", up);
     return () => {
-      window.removeEventListener("keydown", onDown);
-      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("keydown", dn);
+      window.removeEventListener("keyup", up);
     };
   }, []);
 
@@ -54,26 +59,18 @@ export default function FootController({ active = false }) {
     if (!active || mode !== "foot") return;
 
     const p = ref.current.position;
-
-    // combine keyboard + mobile stick
-    let vx = 0, vz = 0;
-    if (keys.current.w) vz -= 1;
-    if (keys.current.s) vz += 1;
-    if (keys.current.a) vx -= 1;
-    if (keys.current.d) vx += 1;
-
-    // mobile stick: steer.x => left/right, steer.y => forward/back
+    // keyboard
+    let vx = (keys.current.d || keys.current.right ? 1 : 0) + (keys.current.a || keys.current.left ? -1 : 0);
+    let vz = (keys.current.s || keys.current.down ? 1 : 0) + (keys.current.w || keys.current.up ? -1 : 0);
+    // joystick
     vx += steer.x;
     vz += steer.y;
 
-    // normalize
     const len = Math.hypot(vx, vz);
     if (len > 0.001) {
       vx /= len; vz /= len;
       p.x += vx * SPEED * dt;
       p.z += vz * SPEED * dt;
-
-      // clamp to island
       const r = Math.hypot(p.x, p.z);
       const maxR = 13.0;
       if (r > maxR) {
@@ -82,8 +79,7 @@ export default function FootController({ active = false }) {
       }
     }
 
-    // third-person camera follow
-    const yaw = Math.atan2(vx, -vz) || 0; // face movement direction
+    const yaw = Math.atan2(vx, -vz) || 0;
     const camX = p.x - Math.sin(yaw) * CAM_BACK;
     const camZ = p.z - Math.cos(yaw) * CAM_BACK;
     camera.position.lerp({ x: camX, y: CAM_HEIGHT, z: camZ }, 0.15);
@@ -93,8 +89,7 @@ export default function FootController({ active = false }) {
   });
 
   return (
-    <group ref={ref} visible={true}>
-      {/* simple capsule avatar */}
+    <group ref={ref} visible>
       <mesh position={[0, 0.25, 0]} castShadow>
         <cylinderGeometry args={[0.12, 0.14, 0.5, 14]} />
         <meshStandardMaterial color={active ? "#22c55e" : "#334155"} />
